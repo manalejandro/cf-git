@@ -394,6 +394,14 @@ export async function getObjectById(db: D1Database, id: string): Promise<LocalOb
   return row ? rowToObject(row) : null;
 }
 
+export async function getObjectsByRepo(db: D1Database, actorId: string, repoName: string): Promise<{ id: string; raw: string | null }[]> {
+  const { results } = await db
+    .prepare("SELECT id, raw FROM objects WHERE actor_id = ? AND type = 'Note' AND url LIKE ?")
+    .bind(actorId, `%/${repoName}/-/commit/%`)
+    .all<{ id: string; raw: string | null }>();
+  return results;
+}
+
 export async function deleteObject(db: D1Database, id: string): Promise<void> {
   await db.prepare("DELETE FROM objects WHERE id = ?").bind(id).run();
 }

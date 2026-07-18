@@ -202,7 +202,7 @@ export function buildDelete(baseUrl: string, actorId: string, objectId: string, 
     id: activityIRI(baseUrl, id),
     type: "Delete",
     actor: actorId,
-    object: { id: objectId, type: "Tombstone" },
+    object: objectId,
     to: [PUBLIC_ADDRESS],
   } as APActivity;
 }

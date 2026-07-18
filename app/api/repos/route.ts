@@ -147,6 +147,9 @@ export async function POST(request: Request) {
     raw: JSON.stringify(note),
   });
 
+  // Store the object ID on the repo so we can send a Delete later
+  await db.prepare("UPDATE repos SET object_id = ? WHERE id = ?").bind(note.id, repoId).run();
+
   const activityId = generateId();
   const create = buildCreate(baseUrl, actor.id, note, activityId);
 

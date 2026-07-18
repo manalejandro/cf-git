@@ -28,5 +28,15 @@ export function badRequest(message = "Bad request"): Response {
 }
 
 export function unauthorized(): Response {
+  return new Response(JSON.stringify({ error: "The access token is invalid" }), {
+    status: 401,
+    headers: {
+      "Content-Type": "application/json",
+      "WWW-Authenticate": 'Basic realm="cf-git"',
+    },
+  });
+}
+
+export function unauthorizedJson(): Response {
   return json({ error: "The access token is invalid" }, 401);
 }

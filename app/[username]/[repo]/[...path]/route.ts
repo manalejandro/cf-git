@@ -1,6 +1,6 @@
 import { getCloudflareContext, json, unauthorized, notFound } from "@/lib/cf";
-import { getRepoByName, getActorByUsername, createObject, createActivity, getFollowerIds, getActorById } from "@/lib/db";
-import { getSessionActor } from "@/lib/auth";
+import { getRepoByName, getActorByUsername, getActorByEmail, createObject, createActivity, getFollowerIds, getActorById } from "@/lib/db";
+import { getSessionActor, verifyPassword } from "@/lib/auth";
 import { GitStore } from "@/lib/git/store";
 import { pktLine, pktFlush, parsePktLines, encodeRefAdvert } from "@/lib/git/protocol";
 import { generatePackBuffer, parseAndStorePack, parseCommit, CommitMeta } from "@/lib/git/packfile";
@@ -16,10 +16,26 @@ function concatU8(chunks: Uint8Array[]): Uint8Array {
   return r;
 }
 
-function getBearerToken(request: Request): string | null {
+async function getGitAuthActor(request: Request, db: D1Database, hostname: string): Promise<{ id: string; username: string; domain: string } | null> {
   const auth = request.headers.get("authorization") ?? request.headers.get("Authorization") ?? "";
-  const m = auth.match(/^Bearer\s+(.+)$/i);
-  return m ? m[1] : null;
+
+  const bearer = auth.match(/^Bearer\s+(.+)$/i);
+  if (bearer) return getSessionActor(db, bearer[1]);
+
+  const basic = auth.match(/^Basic\s+(.+)$/i);
+  if (!basic) return null;
+  let decoded: string;
+  try { decoded = atob(basic[1]); } catch { return null; }
+  const colon = decoded.indexOf(":");
+  if (colon < 0) return null;
+  const credUser = decoded.slice(0, colon);
+  const password = decoded.slice(colon + 1);
+
+  let actor = await getActorByUsername(db, credUser, hostname);
+  if (!actor && credUser.includes("@")) actor = await getActorByEmail(db, credUser);
+  if (!actor || !actor.passwordHash) return null;
+  if (!(await verifyPassword(password, actor.passwordHash))) return null;
+  return { id: actor.id, username: actor.username, domain: actor.domain };
 }
 
 async function resolveUserRepo(
@@ -113,11 +129,9 @@ async function handleUploadPack(request: Request, store: GitStore): Promise<Resp
 // ─── Receive Pack (push) ───────────────────────────
 
 async function handleReceivePackRefs(
-  store: GitStore, db: D1Database, request: Request, repo: any
+  store: GitStore, db: D1Database, request: Request, repo: any, hostname: string
 ): Promise<Response> {
-  const token = getBearerToken(request);
-  if (!token) return unauthorized();
-  const session = await getSessionActor(db, token);
+  const session = await getGitAuthActor(request, db, hostname);
   if (!session || session.id !== repo.actorId) return unauthorized();
 
   const allRefs = await store.listRefs("");
@@ -139,11 +153,9 @@ async function handleReceivePackRefs(
 }
 
 async function handleReceivePack(
-  request: Request, store: GitStore, db: D1Database, repo: any, repoName: string, actor: any, env: any, username: string
+  request: Request, store: GitStore, db: D1Database, repo: any, repoName: string, actor: any, env: any, username: string, hostname: string
 ): Promise<Response> {
-  const token = getBearerToken(request);
-  if (!token) return unauthorized();
-  const session = await getSessionActor(db, token);
+  const session = await getGitAuthActor(request, db, hostname);
   if (!session || session.id !== repo.actorId) return unauthorized();
 
   const data = new Uint8Array(await request.arrayBuffer());
@@ -201,6 +213,7 @@ async function handleReceivePack(
 
   const reportLines = commands.map(c => `ok ${c.ref}`);
   const response = concatU8([
+    pktLine("unpack ok\n"),
     ...reportLines.map(l => pktLine(`${l}\n`)),
     pktFlush(),
   ]);
@@ -251,8 +264,9 @@ async function federatePush(
   for (const { sha, meta } of commits) {
     const objId = generateId();
     const firstLine = meta.message.split("\n")[0];
+    const repoRef = `${username}/${repoName}`;
     const commitUrl = `${baseUrl}/${username}/${repoName}/-/commit/${sha}`;
-    const content = `[${sha.slice(0, 7)}] ${firstLine}\n\n${meta.message}`;
+    const content = `[${repoRef}] [${sha.slice(0, 7)}] ${firstLine}\n\n${meta.message}`;
 
     const note = buildRepoNote(baseUrl, objId, {
       actorUsername: username,
@@ -335,7 +349,7 @@ export async function GET(
     const url = new URL(request.url);
     const service = url.searchParams.get("service");
     if (service === "git-upload-pack") return handleUploadPackRefs(store);
-    if (service === "git-receive-pack") return handleReceivePackRefs(store, db, request, repo);
+    if (service === "git-receive-pack") return handleReceivePackRefs(store, db, request, repo, url.hostname);
     return handleUploadPackRefs(store);
   }
 
@@ -359,7 +373,7 @@ export async function POST(
   const pathStr = path?.join("/");
 
   if (pathStr === "git-upload-pack") return handleUploadPack(request, store);
-  if (pathStr === "git-receive-pack") return handleReceivePack(request, store, db, repo, repoName, actor, env, username);
+  if (pathStr === "git-receive-pack") return handleReceivePack(request, store, db, repo, repoName, actor, env, username, new URL(request.url).hostname);
 
   return notFound("Not found");
 }

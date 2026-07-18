@@ -127,7 +127,7 @@ export default function RepoPage() {
           </div>
         </div>
 
-        {repo.isExternal && (
+        {!!repo.isExternal && (
           <div className="bg-card border border-border rounded-xl p-4 mb-8">
             <p className="text-sm text-muted mb-2">External Repository</p>
             {repo.externalUrl && <p className="text-sm font-mono text-primary">{repo.externalUrl}</p>}

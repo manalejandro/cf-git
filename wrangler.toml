@@ -1,0 +1,46 @@
+name = "cf-git"
+main = "src/worker.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+assets = { directory = ".open-next/assets", binding = "ASSETS" }
+
+route = { pattern = "cf-git.com", custom_domain = true }
+
+[vars]
+INSTANCE_TITLE = "cf-git"
+INSTANCE_DESCRIPTION = "Git repository manager for the fediverse"
+INSTANCE_VERSION = "1.0.0"
+INSTANCE_URL = "https://cf-git.com"
+NODE_ENV = "production"
+TURNSTILE_SITE_KEY = ""
+TURNSTILE_SECRET_KEY = ""
+EMAIL_FROM = "noreply@cf-git.com"
+EMAIL_FROM_NAME = "cf-git"
+MAX_REPO_SIZE_MB = "100"
+MAX_REPO_FILE_SIZE_MB = "25"
+
+[[send_email]]
+name = "EMAIL"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "cf-git"
+database_id = ""
+
+[[queues.producers]]
+binding = "DELIVERY_QUEUE"
+queue = "cf-git-delivery"
+
+[[r2_buckets]]
+binding = "GIT"
+bucket_name = "cf-git-objects"
+
+[[queues.consumers]]
+queue = "cf-git-delivery"
+max_batch_size = 20
+max_batch_timeout = 5
+max_retries = 3
+
+[triggers]
+crons = ["0 */6 * * *"]

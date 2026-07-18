@@ -1,17 +1,29 @@
 {
   "name": "cf-git",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/manalejandro/cf-git.git"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "preview": "npx opennextjs-cloudflare build && npx wrangler dev",
+    "deploy": "npx opennextjs-cloudflare build && npx wrangler deploy",
+    "db:migrate": "npx wrangler d1 execute cf-git --remote --file=lib/db/schema.sql",
+    "db:drop": "npx wrangler d1 execute cf-git --remote --command='DROP TABLE IF EXISTS sessions; DROP TABLE IF EXISTS delivery_failures; DROP TABLE IF EXISTS notifications; DROP TABLE IF EXISTS follows; DROP TABLE IF EXISTS activities; DROP TABLE IF EXISTS objects; DROP TABLE IF EXISTS repo_refs; DROP TABLE IF EXISTS repo_trees; DROP TABLE IF EXISTS repo_commits; DROP TABLE IF EXISTS repos; DROP TABLE IF EXISTS actors;'"
   },
   "dependencies": {
+    "@cloudflare/workers-types": "^5.20260716.1",
+    "@opennextjs/cloudflare": "^1.20.1",
+    "nanoid": "^5.1.5",
     "next": "16.2.10",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "wrangler": "^4.111.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -21,6 +33,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "yarn": "^1.22.22"
   }
 }

@@ -14,6 +14,15 @@ export function middleware(request: NextRequest) {
     });
   }
 
+  // The actor documents advertise the shared inbox at /inbox; internally it is
+  // served by the /api/inbox route.
+  const { pathname } = request.nextUrl;
+  if (pathname === "/inbox") {
+    const url = request.nextUrl.clone();
+    url.pathname = "/api/inbox";
+    return NextResponse.rewrite(url);
+  }
+
   return NextResponse.next();
 }
 

@@ -1,10 +1,9 @@
-import { getCloudflareContext, json, badRequest, unauthorized, activityJson } from "@/lib/cf";
+import { getCloudflareContext, json, badRequest, unauthorized } from "@/lib/cf";
 import { getReposByActor, createRepo, getActorById, createObject, createActivity, getFollowerIds, getRepoByName, updateRepoLastSync, updateRepoSize, createCommit } from "@/lib/db";
 import { getSessionActor } from "@/lib/auth";
-import { generateId, buildRepoNote, buildCreate, repoIRI, actorIRI, followersIRI, keyIRI } from "@/lib/activitypub/utils";
+import { generateId, buildRepoNote, buildCreate } from "@/lib/activitypub/utils";
 import { enqueueDeliveries } from "@/lib/activitypub/queue";
 import { collectFollowerInboxes } from "@/lib/activitypub/federation";
-import { PUBLIC_ADDRESS } from "@/lib/activitypub/vocab";
 import { GitStore } from "@/lib/git/store";
 import { fetchExternalRepo } from "@/lib/git/fetch";
 import type { CommitMeta } from "@/lib/git/packfile";
@@ -174,7 +173,7 @@ export async function POST(request: Request) {
     if (actorObj.privateKeyPem) {
       await enqueueDeliveries(
         env.DELIVERY_QUEUE, inboxes, JSON.stringify(create),
-        repoIRI(baseUrl, username, name), keyIRI(baseUrl, username), actorObj.privateKeyPem
+        actor.id, `${actor.id}#main-key`, actorObj.privateKeyPem
       );
     }
   }

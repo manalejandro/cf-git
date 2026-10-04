@@ -1,10 +1,10 @@
-import { getCloudflareContext, json, badRequest, unauthorized, notFound, activityJson } from "@/lib/cf";
-import { getRepoByName, getRepoById, getActorById, deleteRepo, deleteObject, getFollowerIds, getObjectsByRepo } from "@/lib/db";
+import { getCloudflareContext, json, unauthorized, notFound } from "@/lib/cf";
+import { getRepoByName, getActorById, deleteRepo, deleteObject, getFollowerIds, getObjectsByRepo } from "@/lib/db";
 import { getSessionActor } from "@/lib/auth";
-import { generateId, buildDelete, repoIRI, keyIRI } from "@/lib/activitypub/utils";
+import { generateId, buildDelete } from "@/lib/activitypub/utils";
 import { enqueueDeliveries } from "@/lib/activitypub/queue";
 import { collectFollowerInboxes } from "@/lib/activitypub/federation";
-import { PUBLIC_ADDRESS } from "@/lib/activitypub/vocab";
+import type { APActivity } from "@/lib/types";
 
 export async function GET(request: Request, { params }: { params: Promise<{ repo: string }> }) {
   const { env } = getCloudflareContext();
@@ -65,15 +65,12 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ r
 
   // Build and send Delete activities for each federated commit note
   const noteObjects = await getObjectsByRepo(db, session.id, repoName);
-  const allDeleteActivities: { objId: string; activity: any }[] = [];
+  const allDeleteActivities: { objectId: string; activity: APActivity }[] = [];
   for (const note of noteObjects) {
     try {
       const parsed = note.raw ? JSON.parse(note.raw) : null;
       const noteId = parsed?.id ?? note.id;
-      allDeleteActivities.push({
-        objId: note.id,
-        activity: buildDelete(baseUrl, session.id, noteId, generateId()),
-      });
+      allDeleteActivities.push({ objectId: note.id, activity: buildDelete(baseUrl, session.id, noteId, generateId()) });
     } catch { /* skip */ }
   }
 
@@ -84,24 +81,26 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ r
       if (!a || a.isLocal) return null;
       return { id: a.id, inbox: a.inbox };
     });
-    // Send Delete for the repo object
-    const repoDelete = buildDelete(baseUrl, session.id, objectId, deleteId);
-    await enqueueDeliveries(
-      env.DELIVERY_QUEUE, inboxes, JSON.stringify(repoDelete),
-      session.id, keyIRI(baseUrl, session.username), actorObj.privateKeyPem
-    );
+    // Send Delete for the repo object (only when it was federated)
+    if (objectId) {
+      const repoDelete = buildDelete(baseUrl, session.id, objectId, deleteId);
+      await enqueueDeliveries(
+        env.DELIVERY_QUEUE, inboxes, JSON.stringify(repoDelete),
+        session.id, `${session.id}#main-key`, actorObj.privateKeyPem
+      );
+    }
     // Send Delete for each commit note
-    for (const { objId, activity } of allDeleteActivities) {
+    for (const { activity } of allDeleteActivities) {
       await enqueueDeliveries(
         env.DELIVERY_QUEUE, inboxes, JSON.stringify(activity),
-        session.id, keyIRI(baseUrl, session.username), actorObj.privateKeyPem
+        session.id, `${session.id}#main-key`, actorObj.privateKeyPem
       );
     }
   }
 
   // Clean up locally
-  for (const { objId } of allDeleteActivities) {
-    await deleteObject(db, objId);
+  for (const { objectId } of allDeleteActivities) {
+    await deleteObject(db, objectId);
   }
   if (repo.objectId) {
     await deleteObject(db, repo.objectId);

@@ -4,7 +4,7 @@ import { getSessionActor, verifyPassword } from "@/lib/auth";
 import { GitStore } from "@/lib/git/store";
 import { pktLine, pktFlush, parsePktLines, encodeRefAdvert } from "@/lib/git/protocol";
 import { generatePackBuffer, parseAndStorePack, parseCommit, CommitMeta } from "@/lib/git/packfile";
-import { generateId, buildRepoNote, buildCreate, repoIRI, actorIRI, followersIRI, keyIRI } from "@/lib/activitypub/utils";
+import { generateId, buildRepoNote, buildCreate } from "@/lib/activitypub/utils";
 import { enqueueDeliveries } from "@/lib/activitypub/queue";
 import { collectFollowerInboxes } from "@/lib/activitypub/federation";
 
@@ -271,7 +271,7 @@ async function federatePush(
     const note = buildRepoNote(baseUrl, objId, {
       actorUsername: username,
       repoName,
-      repoDescription: undefined,
+      description: undefined,
       cloneUrl: `${baseUrl}/${username}/${repoName}.git`,
       defaultBranch: "main",
       published: new Date().toISOString(),
@@ -319,7 +319,7 @@ async function federatePush(
         if (actor.privateKeyPem) {
           await enqueueDeliveries(
             env.DELIVERY_QUEUE, inboxes, JSON.stringify(create),
-            repoIRI(baseUrl, username, repoName), keyIRI(baseUrl, username), actor.privateKeyPem
+            actor.id, `${actor.id}#main-key`, actor.privateKeyPem
           );
         }
       }

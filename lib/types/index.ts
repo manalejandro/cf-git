@@ -26,6 +26,13 @@ export interface APActor {
   discoverable?: boolean;
 }
 
+export interface APObject {
+  "@context"?: unknown;
+  id: string;
+  type: string;
+  [key: string]: unknown;
+}
+
 export interface APNote {
   "@context"?: unknown;
   id: string;

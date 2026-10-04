@@ -17,23 +17,23 @@
     "db:drop": "npx wrangler d1 execute cf-git --remote --command='DROP TABLE IF EXISTS sessions; DROP TABLE IF EXISTS delivery_failures; DROP TABLE IF EXISTS notifications; DROP TABLE IF EXISTS follows; DROP TABLE IF EXISTS activities; DROP TABLE IF EXISTS objects; DROP TABLE IF EXISTS repo_refs; DROP TABLE IF EXISTS repo_trees; DROP TABLE IF EXISTS repo_commits; DROP TABLE IF EXISTS repos; DROP TABLE IF EXISTS actors;'"
   },
   "dependencies": {
-    "@cloudflare/workers-types": "^5.20260716.1",
-    "@opennextjs/cloudflare": "^1.20.1",
-    "nanoid": "^5.1.5",
-    "next": "16.2.10",
+    "@cloudflare/workers-types": "^5.20261003.1",
+    "@opennextjs/cloudflare": "^1.20.8",
+    "nanoid": "^5.1.16",
+    "next": "^16.3.8",
     "react": "19.2.4",
     "react-dom": "19.2.4",
-    "wrangler": "^4.111.0"
+    "wrangler": "^4.147.0"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^20.19.43",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "eslint": "^9.39.5",
     "eslint-config-next": "16.2.10",
     "tailwindcss": "^4",
-    "typescript": "^5",
+    "typescript": "^5.9.3",
     "yarn": "^1.22.22"
   }
 }

@@ -1,12 +1,12 @@
-import { signRequest } from "@/lib/activitypub/security";
+import type { MessageBatch } from "@cloudflare/workers-types";
+import { postToInboxSigned, validateOutboundUrl } from "@/lib/activitypub/federation";
+import type { APDeliveryMessage } from "@/lib/activitypub/queue";
 import { getReposForSync, updateRepoLastSync, updateRepoSize, getActorByUsername, getRepoByName, createCommit } from "@/lib/db";
 import { GitStore } from "@/lib/git/store";
 import { fetchExternalRepo } from "@/lib/git/fetch";
 import { pktLine, pktFlush, parsePktLines } from "@/lib/git/protocol";
 import { generatePackBuffer } from "@/lib/git/packfile";
 
-const AP_CONTENT_TYPE = "application/activity+json";
-const AP_ACCEPT = 'application/activity+json, application/ld+json; profile="https://www.w3.org/ns/activitystreams"';
 const PERMANENT_ERRORS = new Set([400, 401, 403, 404, 410, 422]);
 
 interface Env {
@@ -18,30 +18,53 @@ interface Env {
   [key: string]: unknown;
 }
 
-interface DeliveryMessage {
-  inboxUrl: string;
-  activity: string;
-  senderId: string;
-  senderKeyId: string;
-  privateKeyPem: string;
+/** `Retry-After` in seconds (both delta-seconds and HTTP-date forms). */
+function parseRetryAfter(header: string | null): number | null {
+  if (!header) return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(Math.ceil(seconds), 86_400);
+  const date = Date.parse(header);
+  if (Number.isFinite(date)) {
+    return Math.max(0, Math.min(Math.ceil((date - Date.now()) / 1000), 86_400));
+  }
+  return null;
 }
 
-async function deliverOne(msg: DeliveryMessage, env: Env): Promise<{ ok: boolean; permanent: boolean }> {
-  const headers = await signRequest("POST", msg.inboxUrl, msg.activity, msg.privateKeyPem, msg.senderKeyId);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15_000);
+async function deliverOne(
+  inboxUrl: string,
+  activityJson: string,
+  actorId: string,
+  env: Env
+): Promise<{ ok: boolean; permanent: boolean; status: number; retryAfter?: number }> {
+  // SSRF guard: inbox URLs originate from remote actor documents / user input.
+  const validation = validateOutboundUrl(inboxUrl);
+  if (!validation.valid) {
+    console.warn(`[worker] Blocked delivery to ${inboxUrl}: ${validation.reason}`);
+    return { ok: false, permanent: true, status: 0 };
+  }
+
+  const row = await env.DB
+    .prepare("SELECT private_key_pem FROM actors WHERE id = ? AND is_local = 1")
+    .bind(actorId)
+    .first<{ private_key_pem: string }>();
+  if (!row?.private_key_pem) return { ok: false, permanent: true, status: 0 };
+
+  const keyId = `${actorId}#main-key`;
+
   try {
-    const res = await fetch(msg.inboxUrl, {
-      method: "POST",
-      headers: { "Content-Type": AP_CONTENT_TYPE, Accept: AP_ACCEPT, ...headers },
-      body: msg.activity,
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    return { ok: res.ok, permanent: PERMANENT_ERRORS.has(res.status) };
+    // Signed POST (safeFetch re-validates redirect hops and bounds the
+    // timeout): draft-cavage first, retrying with RFC 9421 on 400/401.
+    const res = await postToInboxSigned(inboxUrl, activityJson, keyId, row.private_key_pem, 15_000);
+    if (!res) return { ok: false, permanent: true, status: 0 };
+    await res.body?.cancel().catch(() => {});
+    return {
+      ok: res.ok,
+      permanent: PERMANENT_ERRORS.has(res.status),
+      status: res.status,
+      retryAfter: parseRetryAfter(res.headers.get("Retry-After")) ?? undefined,
+    };
   } catch {
-    clearTimeout(timer);
-    return { ok: false, permanent: false };
+    return { ok: false, permanent: false, status: 0 };
   }
 }
 
@@ -270,14 +293,16 @@ export default {
     return handler.default.fetch(request, env, ctx);
   },
 
-  async queue(batch: MessageBatch<DeliveryMessage>, env: Env): Promise<void> {
+  async queue(batch: MessageBatch<APDeliveryMessage>, env: Env): Promise<void> {
     for (const msg of batch.messages) {
       const body = msg.body;
       if (!body) { msg.ack(); continue; }
+      const { type, inboxUrl, activityJson, actorId } = body;
+      if (type !== "delivery") { msg.ack(); continue; }
       try {
-        const { ok, permanent } = await deliverOne(body, env);
+        const { ok, permanent, retryAfter } = await deliverOne(inboxUrl, activityJson, actorId, env);
         if (ok || permanent) msg.ack();
-        else if (msg.attempts < 3) msg.retry({ delaySeconds: 60 });
+        else if (msg.attempts < 3) msg.retry({ delaySeconds: retryAfter ?? 60 });
         else msg.ack();
       } catch {
         if (msg.attempts < 3) msg.retry({ delaySeconds: 60 });

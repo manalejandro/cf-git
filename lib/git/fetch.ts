@@ -1,5 +1,7 @@
 import { GitStore } from "./store";
 import { parseAndStorePack, parseCommit, CommitMeta } from "./packfile";
+import { calculateRepoSize } from "./size";
+import { asBodyInit } from "./protocol";
 
 function pktLine(data: string): Uint8Array {
   const bytes = new TextEncoder().encode(data);
@@ -47,9 +49,9 @@ function parseRefAdvert(data: Uint8Array): RemoteRef[] {
       const rest = parts.slice(1).join(" ");
       const nullIdx = rest.indexOf("\0");
       if (nullIdx >= 0) {
-        refs.push({ sha, ref: rest.slice(0, nullIdx), capabilities: rest.slice(nullIdx + 1) });
+        refs.push({ sha, ref: rest.slice(0, nullIdx).trim(), capabilities: rest.slice(nullIdx + 1) });
       } else {
-        refs.push({ sha, ref: rest });
+        refs.push({ sha, ref: rest.trim() });
       }
     }
   }
@@ -77,22 +79,75 @@ function ensureDotGit(url: string): string {
   return u.endsWith(".git") ? u : u + ".git";
 }
 
+const METADATA_WALK_CONCURRENCY = 20;
+
+/**
+ * Walk commits reachable from the ref tips and return their metadata. Used to
+ * backfill D1 when a previous sync stored the objects but was interrupted
+ * before recording the commits (the fast path sees the objects as present).
+ */
+async function collectCommitMetadata(store: GitStore, wants: string[]): Promise<{ sha: string; meta: CommitMeta }[]> {
+  const seen = new Set<string>();
+  const queue: string[] = [...wants];
+  const commits: { sha: string; meta: CommitMeta }[] = [];
+
+  while (queue.length > 0) {
+    const batch: string[] = [];
+    for (const s of queue.splice(0, METADATA_WALK_CONCURRENCY)) {
+      if (seen.has(s) || batch.includes(s)) continue;
+      seen.add(s);
+      batch.push(s);
+    }
+    if (batch.length === 0) continue;
+
+    const objects = await Promise.all(batch.map((s) => store.readLoose(s)));
+    for (let i = 0; i < objects.length; i++) {
+      const obj = objects[i];
+      if (!obj) continue;
+      if (obj.type === "commit") {
+        const text = new TextDecoder().decode(obj.raw);
+        commits.push({ sha: batch[i], meta: parseCommit(obj.raw) });
+        for (const p of text.matchAll(/^parent ([0-9a-f]{40})/gm)) queue.push(p[1]);
+      } else if (obj.type === "tag") {
+        const target = new TextDecoder().decode(obj.raw).match(/^object ([0-9a-f]{40})/m);
+        if (target) queue.push(target[1]);
+      }
+    }
+  }
+
+  return commits;
+}
+
+export interface FetchExternalRepoResult {
+  ok: boolean;
+  error?: string;
+  /** Absolute reachable size, only returned by the metadata backfill path. */
+  sizeBytes?: number;
+  /** Stored bytes of the objects downloaded in this run (incremental). */
+  sizeDelta?: number;
+  /** True when the pack covered the whole repository (no local haves). */
+  fullPack?: boolean;
+  commits?: { sha: string; meta: CommitMeta }[];
+  defaultBranch?: string;
+}
+
 export async function fetchExternalRepo(
   externalUrl: string,
-  store: GitStore
-): Promise<{ ok: boolean; error?: string; sizeBytes?: number; commits?: { sha: string; meta: CommitMeta }[] }> {
+  store: GitStore,
+  options: { backfillMetadata?: boolean } = {}
+): Promise<FetchExternalRepoResult> {
   try {
     const base = externalUrl.replace(/\/+$/, "");
     let refsData: Uint8Array;
     let usedBase: string;
 
-    let r1 = await tryFetchRefs(base);
+    const r1 = await tryFetchRefs(base);
     if (r1.ok) {
       refsData = r1.data!;
       usedBase = base;
     } else {
       const withDotGit = base.endsWith(".git") ? base : base + ".git";
-      let r2 = await tryFetchRefs(withDotGit);
+      const r2 = await tryFetchRefs(withDotGit);
       if (r2.ok) {
         refsData = r2.data!;
         usedBase = withDotGit;
@@ -103,74 +158,126 @@ export async function fetchExternalRepo(
 
     const refs = parseRefAdvert(refsData);
     if (refs.length === 0) return { ok: false, error: "No refs found" };
+    await store.writeProgress({ phase: "refs-fetched", refs: refs.length });
 
-    const wants = refs.map((r) => r.sha).filter((s) => /^[0-9a-f]{40}$/.test(s));
+    const validRefs = refs.filter((r) => /^[0-9a-f]{40}$/.test(r.sha));
+    const wants = validRefs.map((r) => r.sha);
     if (wants.length === 0) return { ok: false, error: "No valid refs to fetch" };
 
-    // Use server's capabilities if present, otherwise defaults
-    const serverCaps = refs[0]?.capabilities || "";
-    const caps = [
-      "multi_ack_detailed",
-      "ofs-delta",
-      "agent=cf-git/1.0",
-    ];
-    const capStr = caps.join(" ");
-    const bodyChunks: Uint8Array[] = [];
-    wants.forEach((w, i) => bodyChunks.push(pktLine(`${i === 0 ? "want" : "want"} ${w}${i === 0 ? `\x00${capStr}` : ""}\n`)));
-    bodyChunks.push(pktFlush());
-    bodyChunks.push(pktLine("done\n"));
-    bodyChunks.push(pktFlush());
+    // Default branch advertised by the remote HEAD (published after the
+    // objects are stored).
+    const headRef = refs.find((r) => r.ref === "HEAD" && /^[0-9a-f]{40}$/.test(r.sha));
+    const defaultBranch = headRef
+      ? refs.find((r) => r.ref.startsWith("refs/heads/") && r.sha === headRef.sha)?.ref.replace(/^refs\/heads\//, "")
+      : undefined;
 
-    const body = concatU8(bodyChunks);
-    const packUrl = ensureDotGit(usedBase) + "/git-upload-pack";
-    const packRes = await fetch(packUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-git-upload-pack-request",
-        Accept: "application/x-git-upload-pack-result",
-        "User-Agent": UA,
-      },
-      body,
-      signal: AbortSignal.timeout(120000),
-    });
-    if (!packRes.ok) return { ok: false, error: `Failed to fetch pack: ${packRes.status}` };
+    // Capture the refs we ALREADY have before mirroring the advertised ones:
+    // only objects that really exist locally may be advertised as `have`,
+    // otherwise the server would consider every want satisfied and send an
+    // empty pack (refs must never be treated as proof that objects exist).
+    const localRefs = await store.listRefs("");
+    const haveCandidates = [...new Set(localRefs.map((r) => r.sha).filter((s) => /^[0-9a-f]{40}$/.test(s)))];
+    const haveExists = await Promise.all(haveCandidates.map((sha) => store.objectExists(sha)));
+    const haves = haveCandidates.filter((_, i) => haveExists[i]);
 
-    let packData = new Uint8Array(await packRes.arrayBuffer());
-    // Skip any pkt-line wrapper and locate the PACK data
-    const packMagic = new Uint8Array([0x50, 0x41, 0x43, 0x4b]);
-    const packStart = findSequence(packData, packMagic);
-    if (packStart < 0) return { ok: false, error: "No PACK data in response" };
-    packData = packData.slice(packStart);
-
-    const objects = await parseAndStorePack(packData, store);
-
-    const commits: { sha: string; meta: CommitMeta }[] = [];
-    for (const obj of objects) {
-      if (obj.type === "commit") {
-        const meta = parseCommit(obj.raw);
-        commits.push({ sha: obj.sha, meta });
+    // Fast path: every wanted object already exists locally. On a normal sync
+    // there is nothing else to do; when asked (interrupted previous run) the
+    // commit metadata and size are collected so callers can backfill D1.
+    const exists = await Promise.all(wants.map((w) => store.objectExists(w)));
+    if (exists.every(Boolean)) {
+      let commits: { sha: string; meta: CommitMeta }[] = [];
+      let sizeBytes: number | undefined;
+      if (options.backfillMetadata) {
+        commits = await collectCommitMetadata(store, wants);
+        sizeBytes = await calculateRepoSize(store);
+        console.log(`[git-fetch] backfill: ${commits.length} commits, ${sizeBytes} bytes`);
+      } else {
+        console.log("[git-fetch] fast path: everything up to date");
       }
+      return { ok: true, commits, sizeBytes, defaultBranch };
     }
 
-    const sizeBytes = await store.calculateSize();
+    const commits: { sha: string; meta: CommitMeta }[] = [];
+    let writtenBytes = 0;
 
+    if (!exists.every(Boolean)) {
+      console.log(`[git-fetch] downloading pack: ${wants.length} refs, ${haves.length} haves`);
+      // Incremental fetch: the server sends only the objects we are missing
+      // (thin pack). The pack parser can resolve REF_DELTA bases that live
+      // outside the pack from the store.
+      const caps = [
+        "multi_ack_detailed",
+        "thin-pack",
+        "ofs-delta",
+        "agent=cf-git/1.0",
+      ];
+      const capStr = caps.join(" ");
+      const bodyChunks: Uint8Array[] = [];
+      wants.forEach((w, i) => bodyChunks.push(pktLine(`${i === 0 ? "want" : "want"} ${w}${i === 0 ? `\x00${capStr}` : ""}\n`)));
+      bodyChunks.push(pktFlush());
+      for (const h of haves) bodyChunks.push(pktLine(`have ${h}\n`));
+      bodyChunks.push(pktLine("done\n"));
+      bodyChunks.push(pktFlush());
+
+      const body = concatU8(bodyChunks);
+      const packUrl = ensureDotGit(usedBase) + "/git-upload-pack";
+      const packRes = await fetch(packUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-git-upload-pack-request",
+          Accept: "application/x-git-upload-pack-result",
+          "User-Agent": UA,
+        },
+        body: asBodyInit(body),
+        signal: AbortSignal.timeout(120000),
+      });
+      if (!packRes.ok) return { ok: false, error: `Failed to fetch pack: ${packRes.status}` };
+
+      let packData = new Uint8Array(await packRes.arrayBuffer());
+      await store.writeProgress({ phase: "pack-downloaded", bytes: packData.byteLength });
+      // Skip any pkt-line wrapper and locate the PACK data (subarray = no copy).
+      const packMagic = new Uint8Array([0x50, 0x41, 0x43, 0x4b]);
+      const packStart = findSequence(packData, packMagic);
+      if (packStart < 0) return { ok: false, error: "No PACK data in response" };
+      packData = packData.subarray(packStart);
+
+      const parsed = await parseAndStorePack(packData, store);
+
+      for (const obj of parsed.commits) {
+        commits.push({ sha: obj.sha, meta: parseCommit(obj.raw) });
+      }
+      console.log(`[git-fetch] pack parsed: ${parsed.commits.length} commits, ${parsed.writtenBytes} bytes written from ${packData.byteLength} bytes`);
+      writtenBytes = parsed.writtenBytes;
+      await store.writeProgress({ phase: "pack-parsed", commits: parsed.commits.length, writtenBytes });
+    }
+
+    // Objects are stored (or already present): only now is it safe to publish
+    // the new refs, so a failed pack can never leave refs pointing at objects
+    // that do not exist. Mirror the advertised refs and propagate deletions.
+    const advertised = new Set<string>();
     for (const r of refs) {
-      if (r.ref === "HEAD") continue; // Don't overwrite symbolic HEAD
-      if (r.ref.endsWith("^{}")) continue; // Skip peeled tag refs (protocol artifact)
+      if (r.ref === "HEAD" || r.ref.endsWith("^{}")) continue;
       if (/^[0-9a-f]{40}$/.test(r.sha)) {
+        advertised.add(r.ref);
         await store.writeRef(r.ref, r.sha);
       }
     }
-
-    const headRef = refs.find(r => r.ref === "HEAD" && /^[0-9a-f]{40}$/.test(r.sha));
-    if (headRef) {
-      const defaultBranch = refs.find(r => r.ref.startsWith("refs/heads/") && r.sha === headRef.sha);
-      if (defaultBranch) {
-        await store.writeHead(defaultBranch.ref);
-      }
+    for (const local of localRefs) {
+      if (!advertised.has(local.ref)) await store.deleteRef(local.ref);
     }
 
-    return { ok: true, sizeBytes, commits };
+    if (defaultBranch) await store.writeHead(`refs/heads/${defaultBranch}`);
+    await store.writeProgress({ phase: "refs-mirrored", sizeDelta: writtenBytes });
+
+    // The size is tracked incrementally from the bytes actually written: the
+    // full reachability walk (~10k R2 calls) is only done by the backfill path.
+    return {
+      ok: true,
+      commits,
+      sizeDelta: writtenBytes,
+      fullPack: haves.length === 0,
+      defaultBranch,
+    };
   } catch (err) {
     return { ok: false, error: String(err) };
   }

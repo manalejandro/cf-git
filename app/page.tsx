@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 
 type Locale = "en" | "es";
 type D = typeof dict.en;
@@ -158,6 +159,7 @@ function useAuth() {
     const t = localStorage.getItem("cg_token");
     const u = localStorage.getItem("cg_username");
     const a = localStorage.getItem("cg_actorId");
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- restoring the session from localStorage after hydration
     if (t && u) { setToken(t); setUsername(u); setActorId(a); }
   }, []);
 
@@ -219,6 +221,7 @@ function AuthModal({ d, showAuth, setShowAuth, showRegister, setShowRegister, on
 
   useEffect(() => {
     if (!showAuth) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset the auth form when the dialog closes
       setUsernameInput(""); setEmail(""); setPassword(""); setConfirmPassword("");
       setAuthError(""); setTurnstileToken(""); setShowForgot(false); setForgotSent(false);
       setShowResend(false); setResendSent(false); setTurnstileMode(null);
@@ -227,6 +230,7 @@ function AuthModal({ d, showAuth, setShowAuth, showRegister, setShowRegister, on
   }, [showAuth]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Turnstile may already be loaded by another widget
     if (document.querySelector('script[src*="turnstile"]')) { setTurnstileReady(true); return; }
     const script = document.createElement("script");
     script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js"; script.async = true; script.defer = true;
@@ -242,6 +246,7 @@ function AuthModal({ d, showAuth, setShowAuth, showRegister, setShowRegister, on
     const currentMode = showRegister ? "register" : "login";
     if (currentMode !== turnstileMode) {
       destroyWidget();
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- re-render the Turnstile widget for the new auth mode
       setTurnstileMode(currentMode);
       return;
     }
@@ -266,7 +271,7 @@ function AuthModal({ d, showAuth, setShowAuth, showRegister, setShowRegister, on
       const body: Record<string, string> = { username: usernameInput, password, turnstileToken };
       if (showRegister) body.email = email;
       const res = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      const data = await res.json();
+      const data = await res.json() as { error?: string; verified?: boolean; token: string; username: string; actorId: string };
       if (!res.ok) {
         if (res.status === 403) { setResendEmail(email || usernameInput); setShowResend(true); }
         setAuthError(data.error || "Error"); return;
@@ -349,7 +354,7 @@ function AuthModal({ d, showAuth, setShowAuth, showRegister, setShowRegister, on
 export default function Home() {
   const [locale, setLocale] = useState<Locale>("en");
   const d = dict[locale];
-  const { token, username, actorId, login, logout } = useAuth();
+  const { token, username, logout } = useAuth();
 
   const [repos, setRepos] = useState<Repo[]>([]);
   const [showCreate, setShowCreate] = useState(false);
@@ -379,6 +384,7 @@ export default function Home() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const v = params.get("verified");
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- read the email-verification result from the URL once
     if (v === "true") { setVerificationStatus({ ok: true }); window.history.replaceState({}, "", "/"); }
     else if (v === "false") { setVerificationStatus({ ok: false }); window.history.replaceState({}, "", "/"); }
     const rt = params.get("reset-token");
@@ -401,7 +407,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ name: newName, description: newDesc, isPrivate: newPrivate ? 1 : 0 }),
       });
-      const data = await res.json();
+      const data = await res.json() as Repo & { error?: string };
       if (!res.ok) { setError(data.error || "Error"); return; }
       setSuccess(d.success);
       setNewName(""); setNewDesc(""); setNewPrivate(false);
@@ -421,7 +427,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ name, description: `Cloned from ${cloneUrl}`, isExternal: 1, externalUrl: cloneUrl, cloneUrl }),
       });
-      const data = await res.json();
+      const data = await res.json() as Repo & { error?: string };
       if (!res.ok) { setError(data.error || "Error"); return; }
       setSuccess(d.success); setCloneUrl(""); setShowClone(false);
       setRepos(prev => [data, ...prev]);
@@ -439,7 +445,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ name, description: `Migrated from ${migrateUrl}`, isExternal: 1, externalUrl: migrateUrl }),
       });
-      const data = await res.json();
+      const data = await res.json() as Repo & { error?: string };
       if (!res.ok) { setError(data.error || "Error"); return; }
       setSuccess(d.success); setMigrateUrl(""); setShowMigrate(false);
       setRepos(prev => [data, ...prev]);
@@ -453,7 +459,7 @@ export default function Home() {
     setResetting(true); setResetError("");
     try {
       const res = await fetch("/api/auth/reset-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: resetToken, password: resetPassword }) });
-      const data = await res.json();
+      const data = await res.json() as { error?: string };
       if (!res.ok) { setResetError(data.error || "Error"); return; }
       setResetDone(true);
     } catch { setResetError("Network error"); }
@@ -478,18 +484,18 @@ export default function Home() {
     <div className="min-h-screen flex flex-col">
       <nav className="sticky top-0 z-50 backdrop-blur-xl bg-background/80 border-b border-border">
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
-          <a href="/" className="flex items-center gap-2.5 group">
+          <Link href="/" className="flex items-center gap-2.5 group">
             <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-white font-bold text-sm group-hover:scale-105 transition-transform">G</div>
             <span className="font-semibold text-lg">{d.title}</span>
-          </a>
+          </Link>
           <div className="flex items-center gap-3">
             <Toggle locale={locale} setLocale={setLocale} />
             {token ? (
               <>
-                <a href="/search" className="text-sm text-muted hover:text-foreground transition-colors">{d.search}</a>
-                <a href="/notifications" className="text-sm text-muted hover:text-foreground transition-colors">{d.notifications}</a>
-                <a href="/settings" className="text-sm text-muted hover:text-foreground transition-colors">{d.settings}</a>
-                <a href={`/${username}`} className="text-sm text-primary font-medium hover:underline">{username}</a>
+                <Link href="/search" className="text-sm text-muted hover:text-foreground transition-colors">{d.search}</Link>
+                <Link href="/notifications" className="text-sm text-muted hover:text-foreground transition-colors">{d.notifications}</Link>
+                <Link href="/settings" className="text-sm text-muted hover:text-foreground transition-colors">{d.settings}</Link>
+                <Link href={`/${username}`} className="text-sm text-primary font-medium hover:underline">{username}</Link>
                 <button onClick={logout} className="text-sm text-muted hover:text-error transition-colors">{d.logout}</button>
               </>
             ) : (
@@ -608,7 +614,7 @@ export default function Home() {
                   {repos.map(repo => (
                     <div key={repo.id}
                       className="relative block bg-card border border-border rounded-xl p-5 hover:bg-card-hover transition-colors">
-                      <a href={`/r/${username}/${repo.name}`} className="block">
+                      <Link href={`/r/${username}/${repo.name}`} className="block">
                         <div className="flex items-start justify-between">
                           <div>
                             <h3 className="font-bold text-lg">{username}/{repo.name}</h3>
@@ -623,7 +629,7 @@ export default function Home() {
                             </div>
                           </div>
                         </div>
-                      </a>
+                      </Link>
                       <button onClick={() => handleDeleteRepo(repo.name)}
                         className="absolute top-4 right-4 p-2 rounded-lg bg-error/10 text-error text-xs hover:bg-error/20 transition-colors"
                         title="Delete repository">

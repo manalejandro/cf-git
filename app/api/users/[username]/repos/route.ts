@@ -14,7 +14,7 @@ export async function GET(
   if (!actor) return notFound("User not found");
 
   const { results } = await db
-    .prepare("SELECT id, name, description, default_branch, size_bytes, commit_count, star_count, fork_count, is_private, is_external, published, updated_at FROM repos WHERE actor_id = ? AND is_private = 0 ORDER BY published DESC")
+    .prepare("SELECT id, name, description, default_branch, size_bytes, commit_count, star_count, fork_count, is_private, is_external, external_url, clone_url, object_id, last_sync_at, published, updated_at FROM repos WHERE actor_id = ? AND is_private = 0 ORDER BY published DESC")
     .bind(actor.id)
     .all<Record<string, unknown>>();
 
@@ -29,6 +29,10 @@ export async function GET(
     forkCount: r.fork_count,
     isPrivate: r.is_private,
     isExternal: r.is_external,
+    externalUrl: r.external_url ?? null,
+    cloneUrl: r.clone_url ?? null,
+    objectId: r.object_id ?? null,
+    lastSyncAt: r.last_sync_at ?? null,
     published: r.published,
     updatedAt: r.updated_at,
   })));

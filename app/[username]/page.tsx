@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useSyncExternalStore } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 
 interface RepoSummary {
   id: string; name: string; description: string | null;
@@ -17,12 +18,14 @@ export default function UserProfilePage() {
   const [repos, setRepos] = useState<RepoSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [currentUser, setCurrentUser] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const currentUser = useSyncExternalStore(
+    () => () => {},
+    () => localStorage.getItem("cg_username"),
+    () => null
+  );
 
   useEffect(() => {
-    setCurrentUser(localStorage.getItem("cg_username"));
-    const token = localStorage.getItem("cg_token");
     fetch(`/api/users/${profileUsername}/repos`)
       .then(r => r.json()).then(data => {
         if (Array.isArray(data)) setRepos(data);
@@ -53,14 +56,14 @@ export default function UserProfilePage() {
     <div className="min-h-screen flex flex-col">
       <nav className="sticky top-0 z-50 backdrop-blur-xl bg-background/80 border-b border-border">
         <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
-          <a href="/" className="flex items-center gap-2">
+          <Link href="/" className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-white font-bold text-sm">G</div>
             <span className="font-semibold">cf-git</span>
-          </a>
+          </Link>
           <div className="flex items-center gap-3">
-            {currentUser && <a href={`/${currentUser}`} className="text-sm text-primary font-medium hover:underline">{currentUser}</a>}
-            <a href="/search" className="text-sm text-muted hover:text-foreground">Search</a>
-            <a href="/" className="text-sm text-muted hover:text-foreground">Home</a>
+            {currentUser && <Link href={`/${currentUser}`} className="text-sm text-primary font-medium hover:underline">{currentUser}</Link>}
+            <Link href="/search" className="text-sm text-muted hover:text-foreground">Search</Link>
+            <Link href="/" className="text-sm text-muted hover:text-foreground">Home</Link>
           </div>
         </div>
       </nav>
@@ -87,7 +90,7 @@ export default function UserProfilePage() {
             {repos.map(repo => (
               <div key={repo.id}
                 className="relative bg-card border border-border rounded-xl p-5 hover:bg-card-hover transition-colors">
-                <a href={`/r/${profileUsername}/${repo.name}`} className="block">
+                <Link href={`/r/${profileUsername}/${repo.name}`} className="block">
                   <div className="flex items-start justify-between">
                     <div>
                       <h3 className="font-bold text-lg">{profileUsername}/{repo.name}</h3>
@@ -102,7 +105,7 @@ export default function UserProfilePage() {
                       </div>
                     </div>
                   </div>
-                </a>
+                </Link>
                 {isOwnProfile && (
                   <button onClick={() => handleDelete(repo.name)} disabled={deleting === repo.name}
                     className="absolute top-4 right-4 p-2 rounded-lg bg-error/10 text-error text-xs hover:bg-error/20 transition-colors disabled:opacity-50"

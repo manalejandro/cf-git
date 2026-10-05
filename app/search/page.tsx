@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useRef, useSyncExternalStore } from "react";
+import Link from "next/link";
 
 interface Account {
   id: string; username: string; domain: string;
@@ -19,13 +20,16 @@ export default function SearchPage() {
   const [relationships, setRelationships] = useState<Map<string, Relationship>>(new Map());
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
-  const [currentUser, setCurrentUser] = useState<string | null>(null);
-  const [token, setToken] = useState<string | null>(null);
-
-  useEffect(() => {
-    setCurrentUser(localStorage.getItem("cg_username"));
-    setToken(localStorage.getItem("cg_token"));
-  }, []);
+  const currentUser = useSyncExternalStore(
+    () => () => {},
+    () => localStorage.getItem("cg_username"),
+    () => null
+  );
+  const token = useSyncExternalStore(
+    () => () => {},
+    () => localStorage.getItem("cg_token"),
+    () => null
+  );
 
   const fetchRelationships = async (ids: string[]) => {
     if (!token || !ids.length) return;
@@ -76,7 +80,7 @@ export default function SearchPage() {
         body: JSON.stringify({ targetId }),
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = await res.json() as { state?: string };
         setRelationships(prev => {
           const next = new Map(prev);
           next.set(targetId, { id: targetId, following: data.state === "accepted", requested: data.state === "pending" });
@@ -137,14 +141,14 @@ export default function SearchPage() {
     <div className="min-h-screen flex flex-col">
       <nav className="sticky top-0 z-50 backdrop-blur-xl bg-background/80 border-b border-border">
         <div className="max-w-4xl mx-auto px-4 h-16 flex items-center justify-between">
-          <a href="/" className="flex items-center gap-2">
+          <Link href="/" className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-white font-bold text-sm">G</div>
             <span className="font-semibold">cf-git</span>
-          </a>
+          </Link>
           <div className="flex items-center gap-3">
-            {currentUser && <a href={`/${currentUser}`} className="text-sm text-primary font-medium hover:underline">{currentUser}</a>}
-            <a href="/notifications" className="text-sm text-muted hover:text-foreground">Notifications</a>
-            <a href="/" className="text-sm text-muted hover:text-foreground">Home</a>
+            {currentUser && <Link href={`/${currentUser}`} className="text-sm text-primary font-medium hover:underline">{currentUser}</Link>}
+            <Link href="/notifications" className="text-sm text-muted hover:text-foreground">Notifications</Link>
+            <Link href="/" className="text-sm text-muted hover:text-foreground">Home</Link>
           </div>
         </div>
       </nav>

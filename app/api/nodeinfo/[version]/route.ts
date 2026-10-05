@@ -1,6 +1,6 @@
 import { getCloudflareContext, json } from "@/lib/cf";
 
-export async function GET(_request: Request, { params }: { params: Promise<{ version: string }> }) {
+export async function GET() {
   const { env } = getCloudflareContext();
 
   return json({

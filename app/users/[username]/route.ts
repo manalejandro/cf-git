@@ -1,4 +1,4 @@
-import { getCloudflareContext, activityJson, notFound } from "@/lib/cf";
+import { getCloudflareContext, notFound } from "@/lib/cf";
 import { getActorByUsername } from "@/lib/db";
 import { buildActor } from "@/lib/activitypub/utils";
 import type { NextRequest } from "next/server";

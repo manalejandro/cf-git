@@ -1,5 +1,5 @@
 import { getCloudflareContext, json } from "@/lib/cf";
-import { searchActors, getActorByUsernameAndDomain, getActorById } from "@/lib/db";
+import { searchActors, getActorByUsernameAndDomain } from "@/lib/db";
 import { fetchRemoteObject, resolveWebFinger } from "@/lib/activitypub/federation";
 
 export async function GET(request: Request) {

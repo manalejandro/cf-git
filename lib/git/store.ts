@@ -45,8 +45,13 @@ export function rawToLooseObj(type: string, raw: Uint8Array): Uint8Array {
   return out;
 }
 
+/** Stored size of a loose object without building it (header + payload). */
+export function looseObjectSize(type: string, rawLength: number): number {
+  return type.length + 1 + String(rawLength).length + 1 + rawLength;
+}
+
 export async function sha1(data: Uint8Array): Promise<Uint8Array> {
-  return new Uint8Array(await crypto.subtle.digest("SHA-1", data));
+  return new Uint8Array(await crypto.subtle.digest("SHA-1", data as unknown as BufferSource));
 }
 
 export { OBJ_COMMIT, OBJ_TREE, OBJ_BLOB, OBJ_TAG, OBJ_OFS_DELTA, OBJ_REF_DELTA, TYPE_NAMES };
@@ -65,32 +70,42 @@ export class GitStore {
   }
 
   async readRef(ref: string): Promise<string | null> {
-    const obj = await this.bucket.get(refPath(this.repoId, ref));
-    if (!obj) return null;
-    const text = await obj.text();
-    const m = text.match(/^([0-9a-f]{40})/);
-    return m ? m[1] : null;
+    // Legacy keys may carry the trailing newline of the advertised pkt-line.
+    const clean = ref.replace(/[\0\n]+$/, "");
+    for (const key of [clean, clean + "\n"]) {
+      const obj = await this.bucket.get(refPath(this.repoId, key));
+      if (!obj) continue;
+      const m = (await obj.text()).match(/^([0-9a-f]{40})/);
+      if (m) return m[1];
+    }
+    return null;
   }
 
   async writeRef(ref: string, sha: string): Promise<void> {
-    await this.bucket.put(refPath(this.repoId, ref), sha + "\n");
+    const clean = ref.replace(/[\0\n]+$/, "");
+    await this.bucket.put(refPath(this.repoId, clean), sha + "\n");
+    // Drop a legacy newline-suffixed key for the same ref.
+    if (clean !== ref) await this.bucket.delete(refPath(this.repoId, ref));
   }
 
   async deleteRef(ref: string): Promise<void> {
-    await this.bucket.delete(refPath(this.repoId, ref));
+    const clean = ref.replace(/[\0\n]+$/, "");
+    await this.bucket.delete(refPath(this.repoId, clean));
+    await this.bucket.delete(refPath(this.repoId, clean + "\n"));
   }
 
   async listRefs(prefix: string): Promise<{ ref: string; sha: string }[]> {
     const prefixPath = `${OBJ_PREFIX}/refs/${this.repoId}/${prefix}`;
     const listed = await this.bucket.list({ prefix: prefixPath });
-    const result: { ref: string; sha: string }[] = [];
+    const byRef = new Map<string, string>();
     for (const obj of listed.objects) {
       const rawRef = obj.key.slice(prefixPath.length - prefix.length);
       const ref = rawRef.replace(/[\0\n].*$/, "");
-      const sha = await this.readRef(rawRef);
-      if (sha) result.push({ ref, sha });
+      if (!ref || ref === "HEAD" || ref === "description") continue;
+      const sha = await this.readRef(ref);
+      if (sha) byRef.set(ref, sha);
     }
-    return result;
+    return [...byRef.entries()].map(([ref, sha]) => ({ ref, sha }));
   }
 
   async readHead(): Promise<string | null> {
@@ -119,20 +134,17 @@ export class GitStore {
     return this.bucket.head(objPath(sha)).then(r => r !== null);
   }
 
-  async calculateSize(): Promise<number> {
-    let total = 0;
-    let cursor: string | undefined;
-    do {
-      const listed = await this.bucket.list({
-        prefix: `${OBJ_PREFIX}/objects/`,
-        cursor,
-      });
-      for (const obj of listed.objects) {
-        total += obj.size;
-      }
-      cursor = listed.truncated ? listed.cursor : undefined;
-    } while (cursor);
-    return total;
+  /** Stored (compressed) size of a loose object, 0 when missing. */
+  async objectSize(sha: string): Promise<number> {
+    const head = await this.bucket.head(objPath(sha));
+    return head?.size ?? 0;
+  }
+
+  /** Diagnostic progress marker, readable from outside while an import runs. */
+  async writeProgress(data: Record<string, unknown>): Promise<void> {
+    try {
+      await this.bucket.put("git/progress/current.json", JSON.stringify({ ...data, at: Date.now() }));
+    } catch { /* diagnostics are best-effort */ }
   }
 
   async ensureInitialized(): Promise<void> {
@@ -148,7 +160,6 @@ export class GitStore {
     if (existing) return existing;
 
     const treeSha = await this.writeEmptyTree();
-    const now = new Date().toISOString().replace(/[TZ]/g, " ").slice(0, 19) + " +0000";
     const author = `${username} <${email}> ${Math.floor(Date.now() / 1000)} +0000`;
     const msg = "Initial commit\n";
     const commitRaw = new TextEncoder().encode(

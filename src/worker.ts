@@ -1,11 +1,11 @@
 import type { MessageBatch } from "@cloudflare/workers-types";
 import { postToInboxSigned, validateOutboundUrl } from "@/lib/activitypub/federation";
 import type { APDeliveryMessage } from "@/lib/activitypub/queue";
-import { getReposForSync, updateRepoLastSync, updateRepoSize, getActorByUsername, getRepoByName, createCommit } from "@/lib/db";
+import { getReposForSync, updateRepoLastSync, updateRepoSize, updateRepoDefaultBranch, refreshRepoCommitCount, getActorByUsername, getRepoByName, createCommits } from "@/lib/db";
 import { GitStore } from "@/lib/git/store";
 import { fetchExternalRepo } from "@/lib/git/fetch";
-import { pktLine, pktFlush, parsePktLines } from "@/lib/git/protocol";
-import { generatePackBuffer } from "@/lib/git/packfile";
+import { pktLine, pktFlush, parsePktLines, asBodyInit } from "@/lib/git/protocol";
+import { createPackResponseStream } from "@/lib/git/packfile";
 
 const PERMANENT_ERRORS = new Set([400, 401, 403, 404, 410, 422]);
 
@@ -78,37 +78,40 @@ async function handleCron(env: Env): Promise<void> {
         console.log(`[cron] Syncing repo: ${repo.id} from ${repo.externalUrl}`);
         const store = new GitStore(env.GIT, repo.id);
         await store.ensureInitialized();
-        const result = await fetchExternalRepo(repo.externalUrl, store);
+        const result = await fetchExternalRepo(repo.externalUrl, store, { backfillMetadata: repo.commitCount === 0 });
         if (result.ok) {
-          await updateRepoLastSync(env.DB, repo.id);
+          if (result.defaultBranch && result.defaultBranch !== repo.defaultBranch) {
+            await updateRepoDefaultBranch(env.DB, repo.id, result.defaultBranch);
+          }
           if (result.sizeBytes !== undefined) {
             await updateRepoSize(env.DB, repo.id, result.sizeBytes);
+          } else if (result.sizeDelta !== undefined) {
+            const base = result.fullPack ? 0 : repo.sizeBytes;
+            await updateRepoSize(env.DB, repo.id, base + result.sizeDelta);
           }
           if (result.commits && result.commits.length > 0) {
-            for (const { sha, meta } of result.commits) {
-              try {
-                await createCommit(env.DB, {
-                  id: `${sha}_${repo.id}`,
-                  repoId: repo.id,
-                  sha,
-                  treeSha: meta.treeSha,
-                  parentSha: meta.parentShas[0],
-                  message: meta.message,
-                  authorName: meta.authorName,
-                  authorEmail: meta.authorEmail,
-                  authoredAt: meta.authoredAt,
-                  committerName: meta.committerName,
-                  committerEmail: meta.committerEmail,
-                  committedAt: meta.committedAt,
-                  isLocal: 0,
-                });
-              } catch { /* ignore duplicate */ }
-            }
-            try {
-              await env.DB.prepare("UPDATE repos SET commit_count = commit_count + ?, updated_at = datetime('now') WHERE id = ?").bind(result.commits.length, repo.id).run();
-            } catch { /* ignore */ }
+            await createCommits(env.DB, result.commits.map(({ sha, meta }) => ({
+              id: `${sha}_${repo.id}`,
+              repoId: repo.id,
+              sha,
+              treeSha: meta.treeSha,
+              parentSha: meta.parentShas[0],
+              message: meta.message,
+              authorName: meta.authorName,
+              authorEmail: meta.authorEmail,
+              authoredAt: meta.authoredAt,
+              committerName: meta.committerName,
+              committerEmail: meta.committerEmail,
+              committedAt: meta.committedAt,
+              isLocal: 0,
+            })));
           }
-          console.log(`[cron] Synced repo: ${repo.id}`);
+          // Recompute instead of incrementing: re-fetched commits are skipped
+          // by INSERT OR IGNORE and used to inflate the counter.
+          const commits = await refreshRepoCommitCount(env.DB, repo.id);
+          // Only mark the sync as done once everything above succeeded.
+          await updateRepoLastSync(env.DB, repo.id);
+          console.log(`[cron] Synced repo ${repo.id}: ${result.commits?.length ?? 0} new commits in pack, ${commits} total`);
         } else {
           console.error(`[cron] Failed to sync repo ${repo.id}: ${result.error}`);
         }
@@ -145,6 +148,8 @@ async function handleGitRequest(request: Request, env: Env): Promise<Response | 
   if (!actor) return null;
   const repo = await getRepoByName(env.DB, actor.id, repoName);
   if (!repo) return null;
+  // Private repositories are served by the Next.js route, which enforces auth.
+  if (repo.isPrivate) return null;
 
   const store = new GitStore(env.GIT, repo.id);
   await store.ensureInitialized();
@@ -217,7 +222,7 @@ async function handleGitRequest(request: Request, env: Env): Promise<Response | 
 
         const body = concatU8(chunks);
 
-        return new Response(body, {
+        return new Response(asBodyInit(body), {
           headers: {
             "Content-Type": "application/x-git-upload-pack-advertisement",
             "Cache-Control": "no-cache",
@@ -250,12 +255,9 @@ async function handleGitRequest(request: Request, env: Env): Promise<Response | 
         return new Response("No valid objects", { status: 400 });
       }
 
-      const packData = await generatePackBuffer(store, validWants, haves);
-      const chunks: Uint8Array[] = [];
-      if (haves.length === 0) chunks.push(pktLine("NAK\n"));
-      else chunks.push(pktFlush());
-      chunks.push(packData);
-      return new Response(concatU8(chunks), {
+      const prefix = haves.length === 0 ? pktLine("NAK\n") : pktFlush();
+      const stream = createPackResponseStream(store, validWants, haves, prefix);
+      return new Response(stream, {
         headers: {
           "Content-Type": "application/x-git-upload-pack-result",
           "Cache-Control": "no-cache",
@@ -268,14 +270,9 @@ async function handleGitRequest(request: Request, env: Env): Promise<Response | 
   return null;
 }
 
-export default {
+const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
-
-    if (url.pathname === "/__cron" || request.headers.get("cf-worker-cron-trigger") === "true") {
-      ctx.waitUntil(handleCron(env));
-      return new Response("OK", { status: 200 });
-    }
 
     if (url.pathname === "/__health") {
       return new Response("OK", { status: 200 });
@@ -291,6 +288,13 @@ export default {
 
     const handler = (await import("../.open-next/worker.js")) as { default: { fetch: (req: Request, e: Env, c: ExecutionContext) => Promise<Response> } };
     return handler.default.fetch(request, env, ctx);
+  },
+
+  // Cloudflare Cron Trigger handler: the [triggers] crons entry in wrangler.toml
+  // invokes this export directly.
+  async scheduled(controller: ScheduledController, env: Env): Promise<void> {
+    console.log(`[cron] scheduled trigger fired (${controller.cron})`);
+    await handleCron(env);
   },
 
   async queue(batch: MessageBatch<APDeliveryMessage>, env: Env): Promise<void> {
@@ -311,3 +315,5 @@ export default {
     }
   },
 };
+
+export default worker;

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useSyncExternalStore } from "react";
+import Link from "next/link";
 
 interface Notification {
   id: string; type: string; accountId: string; targetAccountId: string;
@@ -11,10 +12,13 @@ interface Notification {
 export default function NotificationsPage() {
   const [notifs, setNotifs] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
-  const [currentUser, setCurrentUser] = useState<string | null>(null);
+  const currentUser = useSyncExternalStore(
+    () => () => {},
+    () => localStorage.getItem("cg_username"),
+    () => null
+  );
 
   useEffect(() => {
-    setCurrentUser(localStorage.getItem("cg_username"));
     const token = localStorage.getItem("cg_token");
     if (!token) { window.location.href = "/"; return; }
     fetch("/api/notifications", { headers: { Authorization: `Bearer ${token}` } })
@@ -32,14 +36,14 @@ export default function NotificationsPage() {
     <div className="min-h-screen flex flex-col">
       <nav className="sticky top-0 z-50 backdrop-blur-xl bg-background/80 border-b border-border">
         <div className="max-w-4xl mx-auto px-4 h-16 flex items-center justify-between">
-          <a href="/" className="flex items-center gap-2">
+          <Link href="/" className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-white font-bold text-sm">G</div>
             <span className="font-semibold">cf-git</span>
-          </a>
+          </Link>
           <div className="flex items-center gap-3">
-            {currentUser && <a href={`/${currentUser}`} className="text-sm text-primary font-medium hover:underline">{currentUser}</a>}
-            <a href="/search" className="text-sm text-muted hover:text-foreground">Search</a>
-            <a href="/" className="text-sm text-muted hover:text-foreground">Home</a>
+            {currentUser && <Link href={`/${currentUser}`} className="text-sm text-primary font-medium hover:underline">{currentUser}</Link>}
+            <Link href="/search" className="text-sm text-muted hover:text-foreground">Search</Link>
+            <Link href="/" className="text-sm text-muted hover:text-foreground">Home</Link>
           </div>
         </div>
       </nav>

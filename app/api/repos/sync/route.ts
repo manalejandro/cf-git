@@ -1,9 +1,8 @@
 import { getCloudflareContext, json, unauthorized } from "@/lib/cf";
-import { getRepoById, updateRepoLastSync, updateRepoSize, createCommit } from "@/lib/db";
+import { getRepoById, updateRepoLastSync, updateRepoSize, updateRepoDefaultBranch, refreshRepoCommitCount, createCommits } from "@/lib/db";
 import { getSessionActor } from "@/lib/auth";
 import { GitStore } from "@/lib/git/store";
 import { fetchExternalRepo } from "@/lib/git/fetch";
-import type { CommitMeta } from "@/lib/git/packfile";
 
 export async function POST(request: Request) {
   const { env } = getCloudflareContext();
@@ -25,37 +24,39 @@ export async function POST(request: Request) {
   if (repo.isExternal && repo.externalUrl) {
     const store = new GitStore(env.GIT, repo.id);
     await store.ensureInitialized();
-    const result = await fetchExternalRepo(repo.externalUrl, store);
+    const result = await fetchExternalRepo(repo.externalUrl, store, { backfillMetadata: repo.commitCount === 0 });
     if (!result.ok) {
       return json({ error: result.error || "Sync failed" }, 500);
     }
+    if (result.defaultBranch && result.defaultBranch !== repo.defaultBranch) {
+      await updateRepoDefaultBranch(db, repoId, result.defaultBranch);
+    }
     if (result.sizeBytes !== undefined) {
       await updateRepoSize(db, repoId, result.sizeBytes);
+    } else if (result.sizeDelta !== undefined) {
+      const base = result.fullPack ? 0 : repo.sizeBytes;
+      await updateRepoSize(db, repoId, base + result.sizeDelta);
     }
     if (result.commits && result.commits.length > 0) {
-      for (const { sha, meta } of result.commits) {
-        try {
-          await createCommit(db, {
-            id: `${sha}_${repoId}`,
-            repoId,
-            sha,
-            treeSha: meta.treeSha,
-            parentSha: meta.parentShas[0],
-            message: meta.message,
-            authorName: meta.authorName,
-            authorEmail: meta.authorEmail,
-            authoredAt: meta.authoredAt,
-            committerName: meta.committerName,
-            committerEmail: meta.committerEmail,
-            committedAt: meta.committedAt,
-            isLocal: 0,
-          });
-        } catch { /* ignore duplicate */ }
-      }
-      try {
-        await db.prepare("UPDATE repos SET commit_count = commit_count + ?, updated_at = datetime('now') WHERE id = ?").bind(result.commits.length, repoId).run();
-      } catch { /* ignore */ }
+      await createCommits(db, result.commits.map(({ sha, meta }) => ({
+        id: `${sha}_${repoId}`,
+        repoId,
+        sha,
+        treeSha: meta.treeSha,
+        parentSha: meta.parentShas[0],
+        message: meta.message,
+        authorName: meta.authorName,
+        authorEmail: meta.authorEmail,
+        authoredAt: meta.authoredAt,
+        committerName: meta.committerName,
+        committerEmail: meta.committerEmail,
+        committedAt: meta.committedAt,
+        isLocal: 0,
+      })));
     }
+    // Recompute instead of incrementing: re-fetched commits are skipped by the
+    // INSERT OR IGNORE above and used to inflate the counter.
+    await refreshRepoCommitCount(db, repoId);
   }
 
   await updateRepoLastSync(db, repoId);

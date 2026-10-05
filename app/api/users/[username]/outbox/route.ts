@@ -1,7 +1,6 @@
 import { getCloudflareContext, activityJson, notFound } from "@/lib/cf";
 import { getActorByUsername, getReposByActor } from "@/lib/db";
-import { buildActor, buildOrderedCollection, buildOrderedCollectionPage, buildCreate, buildRepoNote, repoIRI, objectIRI, activityIRI, actorIRI, followersIRI, keyIRI, generateId } from "@/lib/activitypub/utils";
-import { PUBLIC_ADDRESS } from "@/lib/activitypub/vocab";
+import { buildOrderedCollection, buildOrderedCollectionPage, buildCreate, buildRepoNote, actorIRI, generateId } from "@/lib/activitypub/utils";
 
 export async function GET(request: Request, { params }: { params: Promise<{ username: string }> }) {
   const { env } = getCloudflareContext();

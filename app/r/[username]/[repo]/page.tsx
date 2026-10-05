@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useSyncExternalStore } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 
 interface RepoDetail {
   id: string; name: string; description: string | null;
@@ -18,14 +19,16 @@ export default function RepoPage() {
   const repoName = params.repo as string;
   const [repo, setRepo] = useState<RepoDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [currentUser, setCurrentUser] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
-
-  useEffect(() => { setCurrentUser(localStorage.getItem("cg_username")); }, []);
+  const currentUser = useSyncExternalStore(
+    () => () => {},
+    () => localStorage.getItem("cg_username"),
+    () => null
+  );
 
   useEffect(() => {
     fetch(`/api/users/${username}/repos`)
-      .then(r => r.json()).then((data: RepoDetail[]) => {
+      .then(r => r.json() as Promise<RepoDetail[]>).then((data) => {
         const found = data.find((r: RepoDetail) => r.name === repoName);
         if (found) setRepo(found);
       }).catch(() => {})
@@ -86,14 +89,14 @@ export default function RepoPage() {
     <div className="min-h-screen flex flex-col">
       <nav className="sticky top-0 z-50 backdrop-blur-xl bg-background/80 border-b border-border">
         <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
-          <a href="/" className="flex items-center gap-2">
+          <Link href="/" className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-white font-bold text-sm">G</div>
             <span className="font-semibold">cf-git</span>
-          </a>
+          </Link>
           <div className="flex items-center gap-3">
-            {currentUser && <a href={`/${currentUser}`} className="text-sm text-primary font-medium hover:underline">{currentUser}</a>}
-            <a href="/search" className="text-sm text-muted hover:text-foreground">Search</a>
-            <a href="/" className="text-sm text-muted hover:text-foreground">Home</a>
+            {currentUser && <Link href={`/${currentUser}`} className="text-sm text-primary font-medium hover:underline">{currentUser}</Link>}
+            <Link href="/search" className="text-sm text-muted hover:text-foreground">Search</Link>
+            <Link href="/" className="text-sm text-muted hover:text-foreground">Home</Link>
           </div>
         </div>
       </nav>

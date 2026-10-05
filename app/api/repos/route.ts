@@ -1,11 +1,13 @@
 import { getCloudflareContext, json, badRequest, unauthorized } from "@/lib/cf";
-import { getReposByActor, createRepo, getActorById, createObject, createActivity, getFollowerIds, getRepoByName, updateRepoLastSync, updateRepoSize, createCommit } from "@/lib/db";
+import { getReposByActor, createRepo, getActorById, getRepoById, createObject, createActivity, getFollowerIds, getRepoByName, updateRepoLastSync, updateRepoSize, refreshRepoCommitCount, createCommit, createCommits } from "@/lib/db";
 import { getSessionActor } from "@/lib/auth";
 import { generateId, buildRepoNote, buildCreate } from "@/lib/activitypub/utils";
 import { enqueueDeliveries } from "@/lib/activitypub/queue";
 import { collectFollowerInboxes } from "@/lib/activitypub/federation";
 import { GitStore } from "@/lib/git/store";
 import { fetchExternalRepo } from "@/lib/git/fetch";
+import { calculateRepoSize } from "@/lib/git/size";
+import { parseCommit } from "@/lib/git/packfile";
 import type { CommitMeta } from "@/lib/git/packfile";
 
 export async function GET(request: Request) {
@@ -57,18 +59,24 @@ export async function POST(request: Request) {
   // For external repos, try fetching remote data before creating DB entry
   let fetchedSize = 0;
   let fetchedCommits: { sha: string; meta: CommitMeta }[] = [];
+  let defaultBranch = "main";
   if (isExternal && externalUrl) {
     const store = new GitStore(env.GIT, repoId);
     await store.ensureInitialized();
-    const fetchResult = await fetchExternalRepo(externalUrl, store);
+    const fetchResult = await fetchExternalRepo(externalUrl, store, { backfillMetadata: true });
     if (!fetchResult.ok) {
       return json({ error: `Sync failed: ${fetchResult.error}` }, 500);
     }
     if (fetchResult.sizeBytes !== undefined) {
       fetchedSize = fetchResult.sizeBytes;
+    } else if (fetchResult.sizeDelta !== undefined) {
+      fetchedSize = fetchResult.sizeDelta;
     }
     if (fetchResult.commits) {
       fetchedCommits = fetchResult.commits;
+    }
+    if (fetchResult.defaultBranch) {
+      defaultBranch = fetchResult.defaultBranch;
     }
   }
 
@@ -81,6 +89,7 @@ export async function POST(request: Request) {
     isExternal,
     externalUrl: externalUrl ?? undefined,
     cloneUrl: cloneUrl ?? undefined,
+    defaultBranch,
     sizeBytes: fetchedSize || undefined,
   });
 
@@ -90,28 +99,22 @@ export async function POST(request: Request) {
 
   // Store commit metadata from external fetch
   if (fetchedCommits.length > 0) {
-    for (const { sha, meta } of fetchedCommits) {
-      try {
-        await createCommit(db, {
-          id: `${sha}_${repoId}`,
-          repoId,
-          sha,
-          treeSha: meta.treeSha,
-          parentSha: meta.parentShas[0],
-          message: meta.message,
-          authorName: meta.authorName,
-          authorEmail: meta.authorEmail,
-          authoredAt: meta.authoredAt,
-          committerName: meta.committerName,
-          committerEmail: meta.committerEmail,
-          committedAt: meta.committedAt,
-          isLocal: 0,
-        });
-      } catch { /* ignore duplicate */ }
-    }
-    try {
-      await db.prepare("UPDATE repos SET commit_count = ?, updated_at = datetime('now') WHERE id = ?").bind(fetchedCommits.length, repoId).run();
-    } catch { /* ignore */ }
+    await createCommits(db, fetchedCommits.map(({ sha, meta }) => ({
+      id: `${sha}_${repoId}`,
+      repoId,
+      sha,
+      treeSha: meta.treeSha,
+      parentSha: meta.parentShas[0],
+      message: meta.message,
+      authorName: meta.authorName,
+      authorEmail: meta.authorEmail,
+      authoredAt: meta.authoredAt,
+      committerName: meta.committerName,
+      committerEmail: meta.committerEmail,
+      committedAt: meta.committedAt,
+      isLocal: 0,
+    })));
+    await refreshRepoCommitCount(db, repoId);
   }
 
   if (!isExternal) {
@@ -119,7 +122,30 @@ export async function POST(request: Request) {
     await store.ensureInitialized();
     const commitSha = await store.initEmptyCommit(actor.username, "git@cf-git.com");
     if (commitSha) {
-      const sizeBytes = await store.calculateSize();
+      // Record the initial commit so the repo page/API report it.
+      try {
+        const obj = await store.readLoose(commitSha);
+        if (obj) {
+          const meta = parseCommit(obj.raw);
+          await createCommit(db, {
+            id: `${commitSha}_${repoId}`,
+            repoId,
+            sha: commitSha,
+            treeSha: meta.treeSha,
+            parentSha: meta.parentShas[0],
+            message: meta.message,
+            authorName: meta.authorName,
+            authorEmail: meta.authorEmail,
+            authoredAt: meta.authoredAt,
+            committerName: meta.committerName,
+            committerEmail: meta.committerEmail,
+            committedAt: meta.committedAt,
+            isLocal: 1,
+          });
+        }
+      } catch { /* metadata is best-effort */ }
+      await refreshRepoCommitCount(db, repoId);
+      const sizeBytes = await calculateRepoSize(store);
       await updateRepoSize(db, repoId, sizeBytes);
     }
   }
@@ -130,7 +156,7 @@ export async function POST(request: Request) {
     repoName: name,
     description: description ?? undefined,
     cloneUrl: cloneUrl ?? undefined,
-    defaultBranch: "main",
+    defaultBranch,
     published,
   });
 
@@ -180,10 +206,12 @@ export async function POST(request: Request) {
 
   await db.prepare("UPDATE actors SET repos_count = repos_count + 1, updated_at = datetime('now') WHERE id = ?").bind(actor.id).run();
 
-  return json({
+  // Return the persisted row so size/commit count/branch are accurate.
+  const created = await getRepoById(db, repoId);
+  return json(created ?? {
     id: repoId, name, description: description ?? null, isPrivate, isExternal,
     externalUrl: externalUrl ?? null, cloneUrl: cloneUrl ?? null,
-    defaultBranch: "main", sizeBytes: 0, commitCount: 0,
+    defaultBranch, sizeBytes: fetchedSize, commitCount: fetchedCommits.length,
     starCount: 0, forkCount: 0, lastSyncAt: null,
     published, updatedAt: published,
   }, 201);

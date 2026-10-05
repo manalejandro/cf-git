@@ -1,7 +1,7 @@
-import type { D1Database } from "@/lib/types/env";
+import type { D1Database } from "@cloudflare/workers-types";
 import type {
-  LocalActor, LocalRepo, LocalCommit, LocalTreeEntry, LocalRef,
-  LocalFollow, LocalObject, LocalActivity, LocalNotification,
+  LocalActor, LocalRepo, LocalCommit, LocalRef,
+  LocalFollow, LocalObject, LocalNotification,
 } from "@/lib/types";
 
 type Row = Record<string, unknown>;
@@ -243,8 +243,29 @@ export async function updateRepoLastSync(db: D1Database, id: string): Promise<vo
   await db.prepare("UPDATE repos SET last_sync_at = datetime('now'), updated_at = datetime('now') WHERE id = ?").bind(id).run();
 }
 
-export async function incrementRepoCommits(db: D1Database, id: string): Promise<void> {
-  await db.prepare("UPDATE repos SET commit_count = commit_count + 1, updated_at = datetime('now') WHERE id = ?").bind(id).run();
+/**
+ * Recompute commit_count from the actual repo_commits rows. Incrementing by the
+ * number of fetched commits inflated the counter on every sync, because
+ * re-fetched commits are skipped by `INSERT OR IGNORE`.
+ */
+export async function refreshRepoCommitCount(db: D1Database, id: string): Promise<number> {
+  const row = await db
+    .prepare("SELECT COUNT(*) AS n FROM repo_commits WHERE repo_id = ?")
+    .bind(id)
+    .first<{ n: number }>();
+  const n = row?.n ?? 0;
+  await db
+    .prepare("UPDATE repos SET commit_count = ?, updated_at = datetime('now') WHERE id = ?")
+    .bind(n, id)
+    .run();
+  return n;
+}
+
+export async function updateRepoDefaultBranch(db: D1Database, id: string, branch: string): Promise<void> {
+  await db
+    .prepare("UPDATE repos SET default_branch = ?, updated_at = datetime('now') WHERE id = ? AND default_branch != ?")
+    .bind(branch, id, branch)
+    .run();
 }
 
 export async function searchRepos(db: D1Database, query: string, limit = 20): Promise<LocalRepo[]> {
@@ -264,12 +285,14 @@ export async function getReposForSync(db: D1Database): Promise<LocalRepo[]> {
 
 // ─── Commits ───────────────────────────────────────
 
-export async function createCommit(db: D1Database, commit: {
+export interface CommitInput {
   id: string; repoId: string; sha: string; treeSha: string; parentSha?: string;
   message: string; authorName: string; authorEmail: string; authoredAt: string;
   committerName: string; committerEmail: string; committedAt: string;
   isLocal?: number; objectId?: string;
-}): Promise<void> {
+}
+
+export async function createCommit(db: D1Database, commit: CommitInput): Promise<void> {
   await db
     .prepare("INSERT OR IGNORE INTO repo_commits (id, repo_id, sha, tree_sha, parent_sha, message, author_name, author_email, authored_at, committer_name, committer_email, committed_at, is_local, object_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
     .bind(commit.id, commit.repoId, commit.sha, commit.treeSha, commit.parentSha ?? null,
@@ -277,6 +300,26 @@ export async function createCommit(db: D1Database, commit: {
       commit.committerName, commit.committerEmail, commit.committedAt,
       commit.isLocal ?? 1, commit.objectId ?? null)
     .run();
+}
+
+/**
+ * Insert many commits in D1 batches (max 50 statements per batch). A full clone
+ * can have hundreds of commits; doing one round trip per commit was slow and
+ * risked hitting per-invocation query limits.
+ */
+export async function createCommits(db: D1Database, commits: CommitInput[]): Promise<void> {
+  const CHUNK = 50;
+  for (let i = 0; i < commits.length; i += CHUNK) {
+    const statements = commits.slice(i, i + CHUNK).map((commit) =>
+      db
+        .prepare("INSERT OR IGNORE INTO repo_commits (id, repo_id, sha, tree_sha, parent_sha, message, author_name, author_email, authored_at, committer_name, committer_email, committed_at, is_local, object_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(commit.id, commit.repoId, commit.sha, commit.treeSha, commit.parentSha ?? null,
+          commit.message, commit.authorName, commit.authorEmail, commit.authoredAt,
+          commit.committerName, commit.committerEmail, commit.committedAt,
+          commit.isLocal ?? 1, commit.objectId ?? null)
+    );
+    if (statements.length > 0) await db.batch(statements);
+  }
 }
 
 export async function getCommitsByRepo(db: D1Database, repoId: string, limit = 50, offset = 0): Promise<LocalCommit[]> {

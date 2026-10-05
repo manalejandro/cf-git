@@ -1,6 +1,3 @@
-import { getCloudflareContext } from "@/lib/cf";
-import type { LocalActor } from "@/lib/types";
-
 export async function hashPassword(password: string): Promise<string> {
   const encoder = new TextEncoder();
   const salt = crypto.getRandomValues(new Uint8Array(16));

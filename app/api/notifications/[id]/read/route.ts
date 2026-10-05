@@ -1,4 +1,4 @@
-import { getCloudflareContext, json, unauthorized, notFound } from "@/lib/cf";
+import { getCloudflareContext, json, unauthorized } from "@/lib/cf";
 import { markNotificationRead } from "@/lib/db";
 import { getSessionActor } from "@/lib/auth";
 

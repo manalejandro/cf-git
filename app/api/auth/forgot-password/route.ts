@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { getCloudflareContext, json, badRequest } from "@/lib/cf";
+import { getCloudflareContext, json } from "@/lib/cf";
 import { getActorByEmail, setPasswordResetToken } from "@/lib/db";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { detectLocale } from "@/lib/i18n/dict";

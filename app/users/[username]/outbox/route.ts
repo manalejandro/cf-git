@@ -1,6 +1,6 @@
 import { getCloudflareContext, notFound } from "@/lib/cf";
 import { getActorByUsername, getReposByActor } from "@/lib/db";
-import { buildActor, buildOrderedCollection, buildOrderedCollectionPage, buildCreate, buildRepoNote, actorIRI, generateId } from "@/lib/activitypub/utils";
+import { buildOrderedCollection, buildOrderedCollectionPage, buildCreate, buildRepoNote, actorIRI, generateId } from "@/lib/activitypub/utils";
 import type { NextRequest } from "next/server";
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ username: string }> }) {

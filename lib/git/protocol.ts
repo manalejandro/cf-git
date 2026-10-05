@@ -59,3 +59,12 @@ export function encodeRefAdvert(refs: { ref: string; sha: string }[], service: s
   chunks.push(pktFlush());
   return chunks;
 }
+
+/**
+ * The DOM lib types reject the newer generic `Uint8Array<ArrayBufferLike>` for
+ * `BodyInit`/`BufferSource`, but Workers accepts it at runtime. This keeps the
+ * call sites clean instead of scattering casts.
+ */
+export function asBodyInit(bytes: Uint8Array): BodyInit {
+  return bytes as unknown as BodyInit;
+}

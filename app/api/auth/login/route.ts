@@ -2,7 +2,6 @@ import type { NextRequest } from "next/server";
 import { getCloudflareContext, json, badRequest } from "@/lib/cf";
 import { verifyPassword, createSessionToken } from "@/lib/auth";
 import { getActorByUsername, getActorByEmail } from "@/lib/db";
-import { detectLocale } from "@/lib/i18n/dict";
 
 export async function POST(request: NextRequest) {
   const { env } = getCloudflareContext();

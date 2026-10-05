@@ -17,7 +17,6 @@ export async function GET(
   if (!actor) return notFound("Actor not found");
 
   const baseUrl = new URL(_request.url).origin;
-  const domain = new URL(_request.url).hostname;
 
   const note = {
     "@context": [

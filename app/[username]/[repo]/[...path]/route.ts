@@ -1,12 +1,15 @@
-import { getCloudflareContext, json, unauthorized, notFound } from "@/lib/cf";
-import { getRepoByName, getActorByUsername, getActorByEmail, createObject, createActivity, getFollowerIds, getActorById } from "@/lib/db";
+import { getCloudflareContext, unauthorized, notFound } from "@/lib/cf";
+import { getRepoByName, getActorByUsername, getActorByEmail, createObject, createActivity, getFollowerIds, getActorById, refreshRepoCommitCount, createCommits } from "@/lib/db";
 import { getSessionActor, verifyPassword } from "@/lib/auth";
 import { GitStore } from "@/lib/git/store";
-import { pktLine, pktFlush, parsePktLines, encodeRefAdvert } from "@/lib/git/protocol";
-import { generatePackBuffer, parseAndStorePack, parseCommit, CommitMeta } from "@/lib/git/packfile";
+import { calculateRepoSize } from "@/lib/git/size";
+import { pktLine, pktFlush, parsePktLines, encodeRefAdvert, asBodyInit } from "@/lib/git/protocol";
+import { createPackResponseStream, parseAndStorePack, parseCommit, CommitMeta } from "@/lib/git/packfile";
 import { generateId, buildRepoNote, buildCreate } from "@/lib/activitypub/utils";
 import { enqueueDeliveries } from "@/lib/activitypub/queue";
 import { collectFollowerInboxes } from "@/lib/activitypub/federation";
+import type { LocalActor, LocalRepo } from "@/lib/types";
+import type { CloudflareEnv } from "@/lib/types/env";
 
 function concatU8(chunks: Uint8Array[]): Uint8Array {
   const total = chunks.reduce((a, c) => a + c.length, 0);
@@ -68,7 +71,7 @@ async function handleUploadPackRefs(
   const caps = ["multi_ack_detailed", "thin-pack", "ofs-delta", "agent=cf-git/1.0"];
   const chunks = encodeRefAdvert(refs, "git-upload-pack", caps);
 
-  return new Response(concatU8(chunks), {
+  return new Response(asBodyInit(concatU8(chunks)), {
     headers: {
       "Content-Type": "application/x-git-upload-pack-advertisement",
       "Cache-Control": "no-cache",
@@ -101,7 +104,7 @@ async function handleUploadPack(request: Request, store: GitStore): Promise<Resp
     const caps = ["multi_ack_detailed", "thin-pack", "ofs-delta", "agent=cf-git/1.0"];
     const refs = await store.listRefs("");
     const chunks = encodeRefAdvert(refs, "git-upload-pack", caps);
-    return new Response(concatU8(chunks), {
+    return new Response(asBodyInit(concatU8(chunks)), {
       headers: {
         "Content-Type": "application/x-git-upload-pack-advertisement",
         "Cache-Control": "no-cache",
@@ -109,16 +112,12 @@ async function handleUploadPack(request: Request, store: GitStore): Promise<Resp
     });
   }
 
-  const packData = await generatePackBuffer(store, validWants, haves);
-  const chunks: Uint8Array[] = [];
-  if (haves.length === 0) {
-    chunks.push(pktLine("NAK\n"));
-  }
-  chunks.push(pktFlush());
-  chunks.push(packData);
-  const response = concatU8(chunks);
+  const prefixChunks: Uint8Array[] = [];
+  if (haves.length === 0) prefixChunks.push(pktLine("NAK\n"));
+  prefixChunks.push(pktFlush());
+  const stream = createPackResponseStream(store, validWants, haves, concatU8(prefixChunks));
 
-  return new Response(response, {
+  return new Response(stream, {
     headers: {
       "Content-Type": "application/x-git-upload-pack-result",
       "Cache-Control": "no-cache",
@@ -129,7 +128,7 @@ async function handleUploadPack(request: Request, store: GitStore): Promise<Resp
 // ─── Receive Pack (push) ───────────────────────────
 
 async function handleReceivePackRefs(
-  store: GitStore, db: D1Database, request: Request, repo: any, hostname: string
+  store: GitStore, db: D1Database, request: Request, repo: LocalRepo, hostname: string
 ): Promise<Response> {
   const session = await getGitAuthActor(request, db, hostname);
   if (!session || session.id !== repo.actorId) return unauthorized();
@@ -144,7 +143,7 @@ async function handleReceivePackRefs(
   const caps = ["report-status", "delete-refs", "quiet", "agent=cf-git/1.0"];
   const chunks = encodeRefAdvert(refs, "git-receive-pack", caps);
 
-  return new Response(concatU8(chunks), {
+  return new Response(asBodyInit(concatU8(chunks)), {
     headers: {
       "Content-Type": "application/x-git-receive-pack-advertisement",
       "Cache-Control": "no-cache",
@@ -153,7 +152,7 @@ async function handleReceivePackRefs(
 }
 
 async function handleReceivePack(
-  request: Request, store: GitStore, db: D1Database, repo: any, repoName: string, actor: any, env: any, username: string, hostname: string
+  request: Request, store: GitStore, db: D1Database, repo: LocalRepo, repoName: string, actor: LocalActor, env: CloudflareEnv, username: string, hostname: string
 ): Promise<Response> {
   const session = await getGitAuthActor(request, db, hostname);
   if (!session || session.id !== repo.actorId) return unauthorized();
@@ -161,7 +160,7 @@ async function handleReceivePack(
   const data = new Uint8Array(await request.arrayBuffer());
   const { commands, packData } = extractCommands(data);
 
-  const objects = await parseAndStorePack(packData, store);
+  const { commits: objects } = await parseAndStorePack(packData, store);
 
   // Update refs in R2
   for (const cmd of commands) {
@@ -172,9 +171,9 @@ async function handleReceivePack(
     }
   }
 
-  // Update size in D1
+  // Update size in D1 (only the objects reachable from this repo's refs)
   try {
-    const sizeBytes = await store.calculateSize();
+    const sizeBytes = await calculateRepoSize(store);
     await db.prepare("UPDATE repos SET size_bytes = ?, updated_at = datetime('now') WHERE id = ?").bind(sizeBytes, repo.id).run();
   } catch { /* ignore */ }
 
@@ -182,27 +181,28 @@ async function handleReceivePack(
   const commits: { sha: string; meta: CommitMeta }[] = [];
   for (const obj of objects) {
     if (obj.type !== "commit") continue;
-    const meta = parseCommit(obj.raw);
-    commits.push({ sha: obj.sha, meta });
-    try {
-      await db.prepare(
-        `INSERT OR IGNORE INTO repo_commits (id, repo_id, sha, tree_sha, parent_sha, message, author_name, author_email, authored_at, committer_name, committer_email, committed_at, is_local)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
-      ).bind(
-        `${obj.sha}_${repo.id}`, repo.id,
-        obj.sha, meta.treeSha,
-        meta.parentShas[0] || null, meta.message,
-        meta.authorName, meta.authorEmail, meta.authoredAt,
-        meta.committerName, meta.committerEmail, meta.committedAt
-      ).run();
-    } catch { /* ignore */ }
+    commits.push({ sha: obj.sha, meta: parseCommit(obj.raw) });
   }
 
   if (commits.length > 0) {
     try {
-      await db.prepare(
-        "UPDATE repos SET commit_count = commit_count + ?, updated_at = datetime('now') WHERE id = ?"
-      ).bind(commits.length, repo.id).run();
+      await createCommits(db, commits.map(({ sha, meta }) => ({
+        id: `${sha}_${repo.id}`,
+        repoId: repo.id,
+        sha,
+        treeSha: meta.treeSha,
+        parentSha: meta.parentShas[0] || undefined,
+        message: meta.message,
+        authorName: meta.authorName,
+        authorEmail: meta.authorEmail,
+        authoredAt: meta.authoredAt,
+        committerName: meta.committerName,
+        committerEmail: meta.committerEmail,
+        committedAt: meta.committedAt,
+        isLocal: 1,
+      })));
+      // Recompute: re-pushed commits are skipped by INSERT OR IGNORE.
+      await refreshRepoCommitCount(db, repo.id);
     } catch { /* ignore */ }
   }
 
@@ -218,7 +218,7 @@ async function handleReceivePack(
     pktFlush(),
   ]);
 
-  return new Response(response, {
+  return new Response(asBodyInit(response), {
     headers: {
       "Content-Type": "application/x-git-receive-pack-result",
       "Cache-Control": "no-cache",
@@ -255,7 +255,7 @@ function extractCommands(data: Uint8Array): {
 // ─── Federation ─────────────────────────────────────
 
 async function federatePush(
-  db: D1Database, env: any, actor: any, repo: any,
+  db: D1Database, env: CloudflareEnv, actor: LocalActor, repo: LocalRepo,
   repoName: string, username: string,
   commits: { sha: string; meta: CommitMeta }[]
 ): Promise<void> {
@@ -339,7 +339,7 @@ export async function GET(
 
   const resolved = await resolveUserRepo(username, repoParam, new URL(request.url).hostname, db);
   if (!resolved) return notFound("Repository not found");
-  const { repoName, repo } = resolved;
+  const { repo } = resolved;
   const store = new GitStore(env.GIT, repo.id);
   await store.ensureInitialized();
 
@@ -348,8 +348,12 @@ export async function GET(
   if (pathStr === "info/refs") {
     const url = new URL(request.url);
     const service = url.searchParams.get("service");
-    if (service === "git-upload-pack") return handleUploadPackRefs(store);
     if (service === "git-receive-pack") return handleReceivePackRefs(store, db, request, repo, url.hostname);
+    // git-upload-pack (clone/fetch): private repos require the owner's credentials.
+    if (repo.isPrivate) {
+      const session = await getGitAuthActor(request, db, url.hostname);
+      if (!session || session.id !== repo.actorId) return unauthorized();
+    }
     return handleUploadPackRefs(store);
   }
 
@@ -372,7 +376,13 @@ export async function POST(
 
   const pathStr = path?.join("/");
 
-  if (pathStr === "git-upload-pack") return handleUploadPack(request, store);
+  if (pathStr === "git-upload-pack") {
+    if (repo.isPrivate) {
+      const session = await getGitAuthActor(request, db, new URL(request.url).hostname);
+      if (!session || session.id !== repo.actorId) return unauthorized();
+    }
+    return handleUploadPack(request, store);
+  }
   if (pathStr === "git-receive-pack") return handleReceivePack(request, store, db, repo, repoName, actor, env, username, new URL(request.url).hostname);
 
   return notFound("Not found");

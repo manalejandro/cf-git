@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useSyncExternalStore } from "react";
+import Link from "next/link";
 
 export default function SettingsPage() {
   const [currentPassword, setCurrentPassword] = useState("");
@@ -9,9 +10,11 @@ export default function SettingsPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [currentUser, setCurrentUser] = useState<string | null>(null);
-
-  useEffect(() => { setCurrentUser(localStorage.getItem("cg_username")); }, []);
+  const currentUser = useSyncExternalStore(
+    () => () => {},
+    () => localStorage.getItem("cg_username"),
+    () => null
+  );
 
   const handleChangePassword = async () => {
     if (newPassword.length < 8) { setError("Password must be at least 8 characters"); return; }
@@ -24,7 +27,7 @@ export default function SettingsPage() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ currentPassword, newPassword }),
       });
-      const data = await res.json();
+      const data = await res.json() as { error?: string };
       if (!res.ok) { setError(data.error || "Error"); return; }
       setMessage("Password changed successfully.");
       setCurrentPassword(""); setNewPassword(""); setConfirmPassword("");
@@ -36,15 +39,15 @@ export default function SettingsPage() {
     <div className="min-h-screen flex flex-col">
       <nav className="sticky top-0 z-50 backdrop-blur-xl bg-background/80 border-b border-border">
         <div className="max-w-4xl mx-auto px-4 h-16 flex items-center justify-between">
-          <a href="/" className="flex items-center gap-2">
+          <Link href="/" className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-white font-bold text-sm">G</div>
             <span className="font-semibold">cf-git</span>
-          </a>
+          </Link>
           <div className="flex items-center gap-3">
-            {currentUser && <a href={`/${currentUser}`} className="text-sm text-primary font-medium hover:underline">{currentUser}</a>}
-            <a href="/search" className="text-sm text-muted hover:text-foreground">Search</a>
-            <a href="/notifications" className="text-sm text-muted hover:text-foreground">Notifications</a>
-            <a href="/" className="text-sm text-muted hover:text-foreground">Home</a>
+            {currentUser && <Link href={`/${currentUser}`} className="text-sm text-primary font-medium hover:underline">{currentUser}</Link>}
+            <Link href="/search" className="text-sm text-muted hover:text-foreground">Search</Link>
+            <Link href="/notifications" className="text-sm text-muted hover:text-foreground">Notifications</Link>
+            <Link href="/" className="text-sm text-muted hover:text-foreground">Home</Link>
           </div>
         </div>
       </nav>

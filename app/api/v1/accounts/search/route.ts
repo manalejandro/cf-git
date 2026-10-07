@@ -21,15 +21,16 @@ export async function GET(request: Request) {
       if (!actor) {
         const href = await resolveWebFinger(q);
         if (href) {
-          const fetched = await fetchRemoteObject(href) as { id: string; preferredUsername: string; name?: string; summary?: string; icon?: { url: string }; image?: { url: string }; publicKey?: { publicKeyPem: string }; inbox?: string } | null;
+          const fetched = await fetchRemoteObject(href) as { id: string; preferredUsername: string; name?: string; summary?: string; icon?: { url: string }; image?: { url: string }; publicKey?: { publicKeyPem: string }; inbox?: string; endpoints?: { sharedInbox?: string } } | null;
           if (fetched?.publicKey?.publicKeyPem) {
             await db.prepare(
-              "INSERT OR REPLACE INTO actors (id, username, domain, display_name, summary, avatar_url, header_url, public_key_pem, inbox, is_local, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, datetime('now'))"
+              "INSERT OR REPLACE INTO actors (id, username, domain, display_name, summary, avatar_url, header_url, public_key_pem, inbox, shared_inbox, is_local, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, datetime('now'))"
             ).bind(
               fetched.id, fetched.preferredUsername, domainPart,
               fetched.name ?? null, fetched.summary ?? null,
               fetched.icon?.url ?? null, fetched.image?.url ?? null,
-              fetched.publicKey.publicKeyPem, fetched.inbox ?? null
+              fetched.publicKey.publicKeyPem, fetched.inbox ?? null,
+              fetched.endpoints?.sharedInbox ?? null
             ).run();
             actor = await getActorByUsernameAndDomain(db, usernamePart, domainPart);
           }

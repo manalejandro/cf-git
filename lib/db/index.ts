@@ -29,6 +29,7 @@ function rowToActor(r: Row): LocalActor {
     passwordResetToken: (r.password_reset_token as string) ?? null,
     passwordResetExpiresAt: (r.password_reset_expires_at as string) ?? null,
     inbox: (r.inbox as string) ?? null,
+    sharedInbox: (r.shared_inbox as string) ?? null,
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
   };
@@ -277,8 +278,16 @@ export async function searchRepos(db: D1Database, query: string, limit = 20): Pr
 }
 
 export async function getReposForSync(db: D1Database): Promise<LocalRepo[]> {
+  // Early-stop: only sync repositories that are actually due. A repo synced
+  // manually (or by a previous tick) within the last 5 hours is skipped, so a
+  // cron tick never re-parses packs that are already up to date.
   const { results } = await db
-    .prepare("SELECT * FROM repos WHERE is_external = 1 AND external_url IS NOT NULL ORDER BY last_sync_at ASC NULLS FIRST LIMIT 50")
+    .prepare(
+      `SELECT * FROM repos
+       WHERE is_external = 1 AND external_url IS NOT NULL
+         AND (last_sync_at IS NULL OR last_sync_at <= datetime('now', '-5 hours'))
+       ORDER BY last_sync_at ASC NULLS FIRST LIMIT 50`
+    )
     .all<Row>();
   return results.map(rowToRepo);
 }

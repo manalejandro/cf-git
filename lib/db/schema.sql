@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS actors (
   password_reset_token        TEXT,
   password_reset_expires_at   TEXT,
   inbox                       TEXT,
+  shared_inbox                TEXT,
   created_at                  TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at                  TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (username, domain)

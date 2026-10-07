@@ -342,6 +342,7 @@ export async function fetchRemoteObject(
 export interface FetchableActor {
   id: string;
   inbox?: string | null;
+  sharedInbox?: string | null;
   endpoints?: { sharedInbox?: string } | null;
 }
 
@@ -356,7 +357,7 @@ export async function collectFollowerInboxes(
     followerIds.map(async (id) => {
       const actor = await fetchActor(id);
       if (!actor) return;
-      const shared = actor.endpoints?.sharedInbox;
+      const shared = actor.sharedInbox ?? actor.endpoints?.sharedInbox;
       if (shared) {
         if (!sharedInboxes.has(shared)) {
           sharedInboxes.add(shared);

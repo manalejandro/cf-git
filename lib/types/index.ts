@@ -97,6 +97,7 @@ export interface LocalActor {
   passwordResetToken: string | null;
   passwordResetExpiresAt: string | null;
   inbox: string | null;
+  sharedInbox: string | null;
   createdAt: string;
   updatedAt: string;
 }

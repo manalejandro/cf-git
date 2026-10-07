@@ -77,8 +77,8 @@ export async function cacheRemoteActor(db: D1Database, actor: APActor): Promise<
   const pem = publicKeyPemFor(actor, "");
   await db
     .prepare(
-      `INSERT INTO actors (id, username, domain, display_name, summary, avatar_url, header_url, public_key_pem, inbox, is_local, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, datetime('now'))
+      `INSERT INTO actors (id, username, domain, display_name, summary, avatar_url, header_url, public_key_pem, inbox, shared_inbox, is_local, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, datetime('now'))
        ON CONFLICT(id) DO UPDATE SET
          username = excluded.username,
          domain = excluded.domain,
@@ -88,6 +88,7 @@ export async function cacheRemoteActor(db: D1Database, actor: APActor): Promise<
          header_url = excluded.header_url,
          public_key_pem = excluded.public_key_pem,
          inbox = excluded.inbox,
+         shared_inbox = COALESCE(NULLIF(excluded.shared_inbox, ''), actors.shared_inbox),
          updated_at = datetime('now')`
     )
     .bind(
@@ -99,7 +100,8 @@ export async function cacheRemoteActor(db: D1Database, actor: APActor): Promise<
       actor.icon?.url ?? null,
       actor.image?.url ?? null,
       pem ?? "",
-      actor.inbox ?? null
+      actor.inbox ?? null,
+      actor.endpoints?.sharedInbox ?? null
     )
     .run();
 }

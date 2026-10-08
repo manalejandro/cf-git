@@ -1,4 +1,4 @@
-import { getCloudflareContext, unauthorized, notFound } from "@/lib/cf";
+import { unauthorized, notFound } from "@/lib/cf";
 import { getRepoByName, getActorByUsername, getActorByEmail, createObject, createActivity, getFollowerIds, getActorById, refreshRepoCommitCount, createCommits } from "@/lib/db";
 import { getSessionActor, verifyPassword } from "@/lib/auth";
 import { GitStore } from "@/lib/git/store";
@@ -10,6 +10,7 @@ import { enqueueDeliveries } from "@/lib/activitypub/queue";
 import { collectFollowerInboxes } from "@/lib/activitypub/federation";
 import type { LocalActor, LocalRepo } from "@/lib/types";
 import type { CloudflareEnv } from "@/lib/types/env";
+import { env } from "cloudflare:workers";
 
 function concatU8(chunks: Uint8Array[]): Uint8Array {
   const total = chunks.reduce((a, c) => a + c.length, 0);
@@ -333,7 +334,6 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ username: string; repo: string; path: string[] }> }
 ) {
-  const { env } = getCloudflareContext();
   const db = env.DB;
   const { username, repo: repoParam, path } = await params;
 
@@ -364,7 +364,6 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ username: string; repo: string; path: string[] }> }
 ) {
-  const { env } = getCloudflareContext();
   const db = env.DB;
   const { username, repo: repoParam, path } = await params;
 

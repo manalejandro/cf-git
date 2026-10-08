@@ -1,13 +1,13 @@
-import { getCloudflareContext, json, unauthorized, notFound } from "@/lib/cf";
+import { json, unauthorized, notFound } from "@/lib/cf";
 import { getRepoByName, getActorById, deleteRepo, deleteObject, getFollowerIds, getObjectsByRepo } from "@/lib/db";
 import { getSessionActor } from "@/lib/auth";
 import { generateId, buildDelete } from "@/lib/activitypub/utils";
 import { enqueueDeliveries } from "@/lib/activitypub/queue";
 import { collectFollowerInboxes } from "@/lib/activitypub/federation";
 import type { APActivity } from "@/lib/types";
+import { env } from "cloudflare:workers";
 
 export async function GET(request: Request, { params }: { params: Promise<{ repo: string }> }) {
-  const { env } = getCloudflareContext();
   const db = env.DB;
   const { repo: repoName } = await params;
 
@@ -35,7 +35,6 @@ export async function GET(request: Request, { params }: { params: Promise<{ repo
 }
 
 export async function DELETE(request: Request, { params }: { params: Promise<{ repo: string }> }) {
-  const { env } = getCloudflareContext();
   const db = env.DB;
   const { repo: repoName } = await params;
 

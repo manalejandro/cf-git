@@ -1,9 +1,9 @@
-import { getCloudflareContext, json, unauthorized } from "@/lib/cf";
+import { json, unauthorized } from "@/lib/cf";
 import { markNotificationRead } from "@/lib/db";
 import { getSessionActor } from "@/lib/auth";
+import { env } from "cloudflare:workers";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { env } = getCloudflareContext();
   const db = env.DB;
   const { id } = await params;
 

@@ -1,12 +1,12 @@
 import type { NextRequest } from "next/server";
-import { getCloudflareContext, json, badRequest } from "@/lib/cf";
+import { json, badRequest } from "@/lib/cf";
 import { hashPassword } from "@/lib/auth";
 import { getActorByPasswordResetToken, updateActorPassword } from "@/lib/db";
 import { sendPasswordResetConfirmation } from "@/lib/email";
 import { detectLocale } from "@/lib/i18n/dict";
+import { env } from "cloudflare:workers";
 
 export async function POST(request: NextRequest) {
-  const { env } = getCloudflareContext();
   const db = env.DB;
 
   const { token, password } = await request.json() as {

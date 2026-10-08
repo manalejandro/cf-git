@@ -3,7 +3,7 @@ main = "src/worker.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
-assets = { directory = ".open-next/assets", binding = "ASSETS" }
+assets = { directory = "dist/client", binding = "ASSETS" }
 
 route = { pattern = "cf-git.com", custom_domain = true }
 

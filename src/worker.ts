@@ -1,4 +1,5 @@
 import type { MessageBatch } from "@cloudflare/workers-types";
+import handler from "vinext/server/fetch-handler";
 import { postToInboxSigned, validateOutboundUrl } from "@/lib/activitypub/federation";
 import type { APDeliveryMessage } from "@/lib/activitypub/queue";
 import { getReposForSync, updateRepoLastSync, updateRepoSize, updateRepoDefaultBranch, refreshRepoCommitCount, getActorByUsername, getRepoByName, createCommits } from "@/lib/db";
@@ -282,12 +283,11 @@ const worker = {
       return new Response("cf-git/1.0", { headers: { "Content-Type": "text/plain" } });
     }
 
-    // Handle Git smart protocol requests directly (bypass OpenNext to preserve binary response)
+    // Handle Git smart protocol requests directly (bypass the framework to preserve binary response)
     const gitResp = await handleGitRequest(request, env);
     if (gitResp) return gitResp;
 
-    const handler = (await import("../.open-next/worker.js")) as { default: { fetch: (req: Request, e: Env, c: ExecutionContext) => Promise<Response> } };
-    return handler.default.fetch(request, env, ctx);
+    return handler.fetch(request, env, ctx);
   },
 
   // Cloudflare Cron Trigger handler: the [triggers] crons entry in wrangler.toml

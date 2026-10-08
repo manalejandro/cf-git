@@ -1,10 +1,10 @@
 import type { NextRequest } from "next/server";
-import { getCloudflareContext, json, badRequest } from "@/lib/cf";
+import { json, badRequest } from "@/lib/cf";
 import { verifyPassword, createSessionToken } from "@/lib/auth";
 import { getActorByUsername, getActorByEmail } from "@/lib/db";
+import { env } from "cloudflare:workers";
 
 export async function POST(request: NextRequest) {
-  const { env } = getCloudflareContext();
   const db = env.DB;
 
   const { username, password, turnstileToken } = await request.json() as {

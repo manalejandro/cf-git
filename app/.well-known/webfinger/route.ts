@@ -1,9 +1,9 @@
 import { type NextRequest } from "next/server";
-import { getCloudflareContext, json, notFound } from "@/lib/cf";
+import { json, notFound } from "@/lib/cf";
 import { getActorByUsername } from "@/lib/db";
+import { env } from "cloudflare:workers";
 
 export async function GET(request: NextRequest): Promise<Response> {
-  const { env } = getCloudflareContext();
   const resource = request.nextUrl.searchParams.get("resource");
   if (!resource) return json({ error: "resource parameter required" }, 400);
 

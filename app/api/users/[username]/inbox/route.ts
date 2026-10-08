@@ -1,17 +1,17 @@
-import { getCloudflareContext, json, unauthorized } from "@/lib/cf";
+import { json, unauthorized } from "@/lib/cf";
 import { getActorByUsername } from "@/lib/db";
 import { extractSigningKeyId } from "@/lib/activitypub/security";
 import { verifyIncomingSignature } from "@/lib/activitypub/signer-key";
 import { processInboxActivity } from "@/lib/activitypub/inbox";
 import type { APActivity } from "@/lib/types";
 import type { NextRequest } from "next/server";
+import { env } from "cloudflare:workers";
 
 // 1 MB is far above any legitimate AP activity we accept.
 const MAX_BODY_BYTES = 1_000_000;
 
 // POST /users/:username/inbox — Personal inbox for federation delivery
 export async function POST(request: NextRequest, { params }: { params: Promise<{ username: string }> }) {
-  const { env } = getCloudflareContext();
   const db = env.DB;
   const { username } = await params;
   const baseUrl = env.INSTANCE_URL;

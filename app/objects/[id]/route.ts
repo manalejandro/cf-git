@@ -1,12 +1,12 @@
 import { type NextRequest } from "next/server";
-import { getCloudflareContext, activityJson, notFound } from "@/lib/cf";
+import { activityJson, notFound } from "@/lib/cf";
 import { getObjectById, getActorById } from "@/lib/db";
+import { env } from "cloudflare:workers";
 
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ): Promise<Response> {
-  const { env } = getCloudflareContext();
   const { id } = await params;
   const objectId = `${new URL(_request.url).origin}/objects/${id}`;
 

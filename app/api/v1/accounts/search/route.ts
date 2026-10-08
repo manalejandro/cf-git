@@ -1,9 +1,9 @@
-import { getCloudflareContext, json } from "@/lib/cf";
+import { json } from "@/lib/cf";
 import { searchActors, getActorByUsernameAndDomain } from "@/lib/db";
 import { fetchRemoteObject, resolveWebFinger } from "@/lib/activitypub/federation";
+import { env } from "cloudflare:workers";
 
 export async function GET(request: Request) {
-  const { env } = getCloudflareContext();
   const db = env.DB;
 
   const url = new URL(request.url);

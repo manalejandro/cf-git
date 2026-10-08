@@ -1,10 +1,10 @@
-import { getCloudflareContext, notFound } from "@/lib/cf";
+import { notFound } from "@/lib/cf";
 import { getActorByUsername, getFollowers } from "@/lib/db";
 import { buildOrderedCollection, buildOrderedCollectionPage, actorIRI } from "@/lib/activitypub/utils";
 import type { NextRequest } from "next/server";
+import { env } from "cloudflare:workers";
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ username: string }> }) {
-  const { env } = getCloudflareContext();
   const db = env.DB;
   const { username } = await params;
 

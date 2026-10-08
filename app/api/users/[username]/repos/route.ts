@@ -1,11 +1,11 @@
-import { getCloudflareContext, json, notFound } from "@/lib/cf";
+import { json, notFound } from "@/lib/cf";
 import { getActorByUsername } from "@/lib/db";
+import { env } from "cloudflare:workers";
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ username: string }> }
 ) {
-  const { env } = getCloudflareContext();
   const db = env.DB;
   const { username } = await params;
 

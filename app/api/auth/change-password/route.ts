@@ -1,10 +1,10 @@
 import type { NextRequest } from "next/server";
-import { getCloudflareContext, json, badRequest, unauthorized } from "@/lib/cf";
+import { json, badRequest, unauthorized } from "@/lib/cf";
 import { verifyPassword, hashPassword, getSessionActor } from "@/lib/auth";
 import { getActorById, updateActorPassword } from "@/lib/db";
+import { env } from "cloudflare:workers";
 
 export async function POST(request: NextRequest) {
-  const { env } = getCloudflareContext();
   const db = env.DB;
 
   const authHeader = request.headers.get("authorization");

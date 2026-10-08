@@ -1,11 +1,11 @@
-import { getCloudflareContext, json, badRequest, unauthorized } from "@/lib/cf";
+import { json, badRequest, unauthorized } from "@/lib/cf";
 import { getActorById, getFollow, createFollow, createNotification, updateActorCounts } from "@/lib/db";
 import { getSessionActor } from "@/lib/auth";
 import { generateId, buildFollow, keyIRI } from "@/lib/activitypub/utils";
 import { deliverToInbox } from "@/lib/activitypub/federation";
+import { env } from "cloudflare:workers";
 
 export async function POST(request: Request) {
-  const { env } = getCloudflareContext();
   const db = env.DB;
 
   const token = getBearerToken(request);

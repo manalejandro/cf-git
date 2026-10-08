@@ -1,8 +1,8 @@
-import { getCloudflareContext, json } from "@/lib/cf";
+import { json } from "@/lib/cf";
 import { searchRepos } from "@/lib/db";
+import { env } from "cloudflare:workers";
 
 export async function GET(request: Request) {
-  const { env } = getCloudflareContext();
   const db = env.DB;
 
   const url = new URL(request.url);

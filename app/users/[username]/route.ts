@@ -1,7 +1,8 @@
-import { getCloudflareContext, notFound } from "@/lib/cf";
+import { notFound } from "@/lib/cf";
 import { getActorByUsername } from "@/lib/db";
 import { buildActor } from "@/lib/activitypub/utils";
 import type { NextRequest } from "next/server";
+import { env } from "cloudflare:workers";
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ username: string }> }) {
   const accept = request.headers.get("accept") ?? "";
@@ -14,7 +15,6 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     });
   }
 
-  const { env } = getCloudflareContext();
   const db = env.DB;
   const { username } = await params;
 

@@ -1,9 +1,10 @@
-import { getCloudflareContext as _getCloudflareContext } from "@opennextjs/cloudflare";
-import type { CloudflareEnv } from "./types/env";
-
-export function getCloudflareContext(): { env: CloudflareEnv } {
-  return _getCloudflareContext() as never;
-}
+/**
+ * Response helpers shared by the API routes.
+ *
+ * Bindings are read directly with `import { env } from "cloudflare:workers"`
+ * (typed through `Cloudflare.Env`, see worker-configuration.d.ts) — there is no
+ * request-context indirection anymore.
+ */
 
 export function json(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data), {

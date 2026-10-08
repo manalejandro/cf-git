@@ -1,4 +1,4 @@
-import { getCloudflareContext, json, badRequest, unauthorized } from "@/lib/cf";
+import { json, badRequest, unauthorized } from "@/lib/cf";
 import { getReposByActor, createRepo, getActorById, getRepoById, createObject, createActivity, getFollowerIds, getRepoByName, updateRepoLastSync, updateRepoSize, refreshRepoCommitCount, createCommit, createCommits } from "@/lib/db";
 import { getSessionActor } from "@/lib/auth";
 import { generateId, buildRepoNote, buildCreate } from "@/lib/activitypub/utils";
@@ -9,9 +9,9 @@ import { fetchExternalRepo } from "@/lib/git/fetch";
 import { calculateRepoSize } from "@/lib/git/size";
 import { parseCommit } from "@/lib/git/packfile";
 import type { CommitMeta } from "@/lib/git/packfile";
+import { env } from "cloudflare:workers";
 
 export async function GET(request: Request) {
-  const { env } = getCloudflareContext();
   const auth = env.DB;
 
   const token = getBearerToken(request);
@@ -24,7 +24,6 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const { env } = getCloudflareContext();
   const db = env.DB;
 
   const token = getBearerToken(request);

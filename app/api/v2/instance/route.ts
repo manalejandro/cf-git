@@ -1,8 +1,7 @@
-import { getCloudflareContext, json } from "@/lib/cf";
+import { json } from "@/lib/cf";
+import { env } from "cloudflare:workers";
 
 export async function GET() {
-  const { env } = getCloudflareContext();
-
   return json({
     domain: new URL(env.INSTANCE_URL).hostname,
     title: env.INSTANCE_TITLE ?? "cf-git",

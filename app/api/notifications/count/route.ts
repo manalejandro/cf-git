@@ -1,9 +1,9 @@
-import { getCloudflareContext, json, unauthorized } from "@/lib/cf";
+import { json, unauthorized } from "@/lib/cf";
 import { getUnreadNotificationCount } from "@/lib/db";
 import { getSessionActor } from "@/lib/auth";
+import { env } from "cloudflare:workers";
 
 export async function GET(request: Request) {
-  const { env } = getCloudflareContext();
   const db = env.DB;
 
   const token = getBearerToken(request);

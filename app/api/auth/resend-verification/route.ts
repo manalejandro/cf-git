@@ -1,11 +1,11 @@
 import type { NextRequest } from "next/server";
-import { getCloudflareContext, json } from "@/lib/cf";
+import { json } from "@/lib/cf";
 import { getActorByEmail, setEmailVerificationToken } from "@/lib/db";
 import { sendVerificationEmail } from "@/lib/email";
 import { detectLocale } from "@/lib/i18n/dict";
+import { env } from "cloudflare:workers";
 
 export async function POST(request: NextRequest) {
-  const { env } = getCloudflareContext();
   const db = env.DB;
 
   const { email } = await request.json() as { email: string };

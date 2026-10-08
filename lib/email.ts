@@ -1,5 +1,6 @@
-import { getCloudflareContext } from "./cf";
+
 import type { SendEmail } from "./types/env";
+import { env } from "cloudflare:workers";
 
 type EmailType = "verification" | "password-reset" | "password-reset-confirm";
 
@@ -88,7 +89,6 @@ export async function sendVerificationEmail(
   verificationUrl: string,
   locale: string
 ): Promise<void> {
-  const { env } = getCloudflareContext();
   const html = buildHtml("verification", verificationUrl, locale);
   await trySend(
     env.EMAIL,
@@ -106,7 +106,6 @@ export async function sendPasswordResetEmail(
   resetUrl: string,
   locale: string
 ): Promise<void> {
-  const { env } = getCloudflareContext();
   const html = buildHtml("password-reset", resetUrl, locale);
   await trySend(
     env.EMAIL,
@@ -124,7 +123,6 @@ export async function sendPasswordResetConfirmation(
   loginUrl: string,
   locale: string
 ): Promise<void> {
-  const { env } = getCloudflareContext();
   const html = buildHtml("password-reset-confirm", loginUrl, locale);
   await trySend(
     env.EMAIL,

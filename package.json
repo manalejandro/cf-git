@@ -7,25 +7,24 @@
     "url": "git+https://github.com/manalejandro/cf-git.git"
   },
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "vite dev",
+    "build": "vite build",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "typecheck:worker": "tsc -p tsconfig.worker.json",
-    "preview": "npx opennextjs-cloudflare build && npx wrangler dev",
-    "deploy": "npx opennextjs-cloudflare build && npx wrangler deploy",
+    "preview": "vite build && vite preview",
+    "deploy": "vinext-cloudflare deploy",
     "db:migrate": "npx wrangler d1 execute cf-git --remote --file=lib/db/schema.sql",
     "db:drop": "npx wrangler d1 execute cf-git --remote --command='DROP TABLE IF EXISTS sessions; DROP TABLE IF EXISTS delivery_failures; DROP TABLE IF EXISTS notifications; DROP TABLE IF EXISTS follows; DROP TABLE IF EXISTS activities; DROP TABLE IF EXISTS objects; DROP TABLE IF EXISTS repo_refs; DROP TABLE IF EXISTS repo_trees; DROP TABLE IF EXISTS repo_commits; DROP TABLE IF EXISTS repos; DROP TABLE IF EXISTS actors;'"
   },
   "dependencies": {
     "@cloudflare/workers-types": "^5.20261003.1",
-    "@opennextjs/cloudflare": "^1.20.8",
     "nanoid": "^5.1.16",
     "next": "^16.3.8",
-    "react": "19.2.4",
-    "react-dom": "19.2.4",
-    "wrangler": "^4.147.0"
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-server-dom-webpack": "^19.3.0",
+    "vinext": "^1.0.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
@@ -36,6 +35,13 @@
     "eslint-config-next": "16.2.10",
     "tailwindcss": "^4",
     "typescript": "^5.9.3",
-    "yarn": "^1.22.22"
-  }
+    "yarn": "^1.22.22",
+    "@cloudflare/vite-plugin": "^1.63.0",
+    "@vinext/cloudflare": "^1.0.1",
+    "@vitejs/plugin-react": "^6.1.2",
+    "@vitejs/plugin-rsc": "^0.5.36",
+    "vite": "^8.3.3",
+    "wrangler": "^4.148.0"
+  },
+  "type": "module"
 }

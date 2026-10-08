@@ -1,8 +1,7 @@
-import { getCloudflareContext, json } from "@/lib/cf";
+import { json } from "@/lib/cf";
+import { env } from "cloudflare:workers";
 
 export async function GET() {
-  const { env } = getCloudflareContext();
-
   return json({
     version: "2.0",
     software: {

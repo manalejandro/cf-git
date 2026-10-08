@@ -1,11 +1,11 @@
-import { getCloudflareContext, json, unauthorized } from "@/lib/cf";
+import { json, unauthorized } from "@/lib/cf";
 import { getRepoById, updateRepoLastSync, updateRepoSize, updateRepoDefaultBranch, refreshRepoCommitCount, createCommits } from "@/lib/db";
 import { getSessionActor } from "@/lib/auth";
 import { GitStore } from "@/lib/git/store";
 import { fetchExternalRepo } from "@/lib/git/fetch";
+import { env } from "cloudflare:workers";
 
 export async function POST(request: Request) {
-  const { env } = getCloudflareContext();
   const db = env.DB;
 
   const token = getBearerToken(request);

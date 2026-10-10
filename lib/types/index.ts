@@ -3,6 +3,8 @@ export interface APActor {
   id: string;
   type: string;
   preferredUsername: string;
+  /** `user@domain` handle (Mastodon's ActorSerializer includes it). */
+  webfinger?: string;
   name?: string;
   summary?: string;
   url?: string;
@@ -63,6 +65,8 @@ export interface APCollection {
   type: string;
   totalItems: number;
   first: string;
+  /** Mastodon's outbox collection carries a `last` link (oldest page). */
+  last?: string;
 }
 
 export interface APCollectionPage {

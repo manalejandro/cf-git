@@ -37,6 +37,6 @@ export async function GET(request: Request, { params }: { params: Promise<{ user
     return activityJson(buildOrderedCollectionPage(outboxId, items));
   }
 
-  const collection = buildOrderedCollection(outboxId, repos.length);
+  const collection = buildOrderedCollection(outboxId, repos.length, `${outboxId}?page=true&min_id=0`);
   return activityJson(collection);
 }

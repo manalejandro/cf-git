@@ -34,9 +34,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     return buildCreate(baseUrl, actor.id, note, generateId());
   });
 
+  // Mastodon's outbox carries `first` and `last` (`?page=true` and
+  // `?page=true&min_id=0`).
   const collection = page === "true"
     ? buildOrderedCollectionPage(outboxId, items)
-    : buildOrderedCollection(outboxId, repos.length);
+    : buildOrderedCollection(outboxId, repos.length, `${outboxId}?page=true&min_id=0`);
 
   return new Response(JSON.stringify(collection), {
     headers: {
